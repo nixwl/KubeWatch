@@ -1,2 +1,3 @@
-# KubeWatch
-KubeWatch is a general method for building kubernute clusters and monitoring stacks, used for collecting private datasets
+﻿# KubeWatch
+
+KubeWatch is a repository for documenting and organizing a complete dataset build workflow. The goal is to keep the specification, examples, configurations, validation rules, and data manifests in one place instead of only storing final outputs.
