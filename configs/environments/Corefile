@@ -1,0 +1,33 @@
+.:53 {
+  bind 192.168.52.10
+  hosts {
+    # ip: host
+    192.168.52.7 gitea.example.com
+    192.168.52.9 rancher.example.com
+    192.168.52.9 prometheus.example.com
+    192.168.52.9 alertmanager.example.com
+    192.168.52.9 alertsnitch.example.com
+    192.168.52.9 grafana.example.com
+    192.168.52.7 producer.prometheus.example.com
+    192.168.52.7 zot.example.com
+    192.168.52.7 wiki.example.com
+    192.168.52.7 rt.example.com
+
+    ttl 60
+    # relaod hosts configurations
+    reload 1m
+    fallthrough
+  }
+  # upstream dns
+  forward . 223.6.6.6 202.207.0.6 119.29.29.29 223.5.5.5 8.8.8.8 192.168.52.2 {
+    force_tcp
+  }
+  # cache ttl
+  cache 120
+  # auto reload configurations interval
+  reload 6s
+  # output log
+  log
+  # output errors
+  errors
+}

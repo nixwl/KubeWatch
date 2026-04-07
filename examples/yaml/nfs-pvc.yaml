@@ -1,0 +1,41 @@
+---
+# example namespace
+kind: Namespace
+apiVersion: v1
+metadata:
+  name: nfs
+  labels:
+    name: nfs
+---
+# example pv
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nfs-nginx-test-data-agent-pv
+  namespace: nfs
+spec:
+  storageClassName: nfs-nginx-test-data-agent
+  mountOptions:
+    - nolock
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  nfs:
+    path: /data/nfs-data/producer/pvc_test
+    server: 192.168.52.12
+---
+# example pvc
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nfs-nginx-test-data-agent-pvc
+  namespace: nfs
+spec:
+  storageClassName: nfs-nginx-test-data-agent
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
