@@ -33,7 +33,7 @@ sudo mkdir -p /etc/coredns
 
 ## Configure the CoreDNS
 
-Create the `systemd` unit file [coredns.service](../configs/environments/coredns.service)
+Create the `systemd` unit file [coredns.service](../../configs/environments/coredns.service)
 
 ```shell
 # Disable 'systemd-resolved'
@@ -69,11 +69,11 @@ systemctl status coredns
 ```
 
 <p align="center">
-  <img src="assets/images/kubernetes-deployment/coredns_netplan.png" coredns_netplan" width="300"><br>
+  <img src="../assets/images/kubernetes-deployment/coredns_netplan.png" coredns_netplan" width="300"><br>
   <em>coredns_netplan</em>
  </p>
 
-Create [Corefile](../configs/environments/Corefile)
+Create [Corefile](../../configs/environments/Corefile)
 
 ```shell
 vim /etc/coredns/Corefile

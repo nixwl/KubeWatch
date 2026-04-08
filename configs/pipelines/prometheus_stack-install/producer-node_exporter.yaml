@@ -1,0 +1,86 @@
+prometheus-node-exporter:
+  affinity: {}
+  commonLabels: {}
+  configmaps: []
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+  daemonsetAnnotations: {}
+  dnsConfig: {}
+  endpoints: []
+  env: {}
+  extraArgs:
+    #- --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/containerd/.+|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
+    - --collector.filesystem.mount-points-exclude=^/(.+)
+    - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$
+    - --no-collector.arp
+    - --no-collector.bcache
+    - --no-collector.bonding
+    - --no-collector.btrfs
+    - --no-collector.conntrack
+    - --no-collector.dmi
+    - --no-collector.edac
+    - --no-collector.entropy
+    - --no-collector.fibrechannel
+    - --no-collector.hwmon
+    - --no-collector.infiniband
+    - --no-collector.ipvs
+    - --no-collector.mdadm
+    - --no-collector.nvme
+    - --no-collector.rapl
+    - --no-collector.selinux
+    - --no-collector.tapestats
+    - --no-collector.textfile
+    - --no-collector.thermal_zone
+    - --no-collector.udp_queues
+    - --no-collector.uname
+    - --no-collector.xfs
+    - --no-collector.zfs
+    - --no-collector.sockstat
+    - --no-collector.powersupplyclass
+    - --no-collector.os
+    - --no-collector.nfsd
+    - --no-collector.nfs
+    - --collector.netdev.device-include=^(ens33)$
+    - --collector.diskstats.device-exclude=^(dm-\d+|md\d+|z?ram\d+|loop\d+|fd\d+|sr\d+|sd[a-z]+\d+)$
+    - --no-collector.netclass
+    - --no-collector.cpufreq
+  prometheus:
+    monitor:
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: "go_.*|process_.*|promhttp_.*|node_scrape_collector_.*|node_time_.*|node_timex_.*|node_vmstat_.*|node_boot_time_seconds|node_forks_total|node_intr_total|node_procs_running|node_softnet_.*|node_schedstat_.*|node_pressure_.*|node_netstat_.*|node_network_receive_.*|node_network_transmit_.*|node_memory_.*|node_filesystem_.*|node_disk_.*|node_cpu_.*"
+          targetLabel: "drop_node_exporter_metric"
+          replacement: "1"
+          action: replace
+        - sourceLabels: [__name__]
+          regex: "go_gc_duration_seconds_sum|go_gc_duration_seconds_count|go_memstats_heap_inuse_bytes|go_memstats_heap_sys_bytes|go_memstats_alloc_bytes_total|go_goroutines|go_threads|process_cpu_seconds_total|process_resident_memory_bytes|node_time_seconds|node_time_zone_offset_seconds|node_timex_offset_seconds|node_timex_sync_status|node_vmstat_pgfault|node_vmstat_pgmajfault|node_softnet_dropped_total|node_softnet_times_squeezed_total|node_softnet_backlog_len|node_softnet_processed_total|node_schedstat_running_seconds_total|node_schedstat_waiting_seconds_total|node_pressure_cpu_waiting_seconds_total|node_pressure_io_waiting_seconds_total|node_pressure_memory_waiting_seconds_total|node_netstat_Tcp_CurrEstab|node_netstat_Tcp_RetransSegs|node_netstat_TcpExt_TCPTimeouts|node_netstat_TcpExt_ListenDrops|node_netstat_Udp_InErrors|node_netstat_Udp_RcvbufErrors|node_network_receive_bytes_total|node_network_receive_packets_total|node_network_receive_drop_total|node_network_receive_errs_total|node_network_transmit_bytes_total|node_network_transmit_packets_total|node_network_transmit_drop_total|node_network_transmit_errs_total|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_Cached_bytes|node_memory_Active_anon_bytes|node_memory_Active_anon_bytes|node_memory_Inactive_anon_bytes|node_memory_Dirty_bytes|node_memory_Writeback_bytes|node_memory_AnonPages_bytes|node_memory_PageTables_bytes|node_memory_KernelStack_bytes|node_memory_Shmem_bytes|node_memory_Unevictable_bytes|node_memory_SUnreclaim_bytes|node_memory_Mlocked_bytes|node_memory_CommitLimit_bytes|node_memory_Committed_AS_bytes|node_filesystem_size_bytes|node_filesystem_avail_bytes|node_filesystem_files|node_filesystem_files_free|node_filesystem_readonly|node_filesystem_device_error|node_disk_io_time_seconds_total|node_disk_io_time_weighted_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_disk_read_time_seconds_total|node_disk_write_time_seconds_total|node_cpu_seconds_total"
+          targetLabel: "drop_node_exporter_metric"
+          replacement: "0"
+          action: replace
+        - sourceLabels: [drop_node_exporter_metric]
+          regex: "1"
+          action: drop
+        - regex: "drop_node_exporter_metric"
+          action: labeldrop
+        - action: drop
+          regex: "go_.*|process_.*|promhttp_.*|node_scrape_collector.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: ".*_bucket$"
+          sourceLabels: [__name__]
+      relabelings:
+        - action: replace
+          sourceLabels: [__meta_kubernetes_endpoint_node_name]
+          targetLabel: node
+          regex: "(.+)"
+        - action: replace
+          sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+          regex: "(.+)"
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi

@@ -1,0 +1,62 @@
+config:
+  global:
+    resolve_timeout: 5m
+    smtp_smarthost: "xxx.example.com:<port>" # SMTP address
+    smtp_from: "xxx@xx" # sender mail address
+    smtp_auth_username: "xxx@xx" # equal to smtp_from
+    smtp_auth_password: "xxx" # access token or password
+    smtp_hello: "xxx.example.com"
+    smtp_require_tls: false
+  inhibit_rules:
+    - equal:
+        - namespace
+        - alertname
+      source_matchers:
+        - severity = critical
+      target_matchers:
+        - severity =~ warning|info
+    - equal:
+        - namespace
+        - alertname
+      source_matchers:
+        - severity = warning
+      target_matchers:
+        - severity = info
+    - equal:
+        - namespace
+      source_matchers:
+        - alertname = InfoInhibitor
+      target_matchers:
+        - severity = info
+    - target_matchers:
+        - alertname = InfoInhibitor
+  receivers:
+    - name: "null"
+    - name: "email.hook"
+      email_configs:
+        - to: "xxx@xxx.com"
+          send_resolved: false
+    - name: "web.hook"
+      webhook_configs:
+        - url: "http://alertsnitch.example.com/webhook"
+          send_resolved: true
+  route:
+    group_by:
+      - namespace
+      - cluster
+      - alertname
+    group_interval: 5m
+    group_wait: 30s
+    receiver: "null"
+    repeat_interval: 12h
+    routes:
+      - matchers:
+          - alertname = "Watchdog"
+        receiver: "null"
+        continue: false
+      - receiver: "email.hook"
+        continue: true
+      - receiver: "web.hook"
+        continue: false
+  templates:
+    - /etc/alertmanager/config/*.tmpl

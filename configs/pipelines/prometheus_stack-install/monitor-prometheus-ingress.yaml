@@ -1,0 +1,15 @@
+prometheus:
+  ingress:
+    annotations:
+      cert-manager.io/cluster-issuer: monitor-ca-issuer
+    enabled: true
+    hosts:
+      - prometheus.example.com
+    ingressClassName: "traefik"
+    labels: {}
+    paths:
+      - /
+    tls:
+      - secretName: prometheus-general-tls
+        hosts:
+          - prometheus.example.com

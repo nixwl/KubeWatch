@@ -5,7 +5,7 @@ This document summarizes the Kubernetes cluster technical deployment guide.
 > k3s is a Lightweight Kubernetes. Easy to install, half the memory, all in a binary of less than 100 MB.
 >
 > <p align="center">
->   <img src="assets/images/kubernetes-deployment/k3s.svg" alt="k3s overview" width="600"><br>
+>   <img src="../assets/images/kubernetes-deployment/k3s.svg" alt="k3s overview" width="600"><br>
 >   <em>k3s overview</em>
 > </p>
 
@@ -79,7 +79,7 @@ sudo systemctl restart sshd.service
 This step will be completed during the Ubuntu Server installation.
 
 <p align="center">
-  <img src="assets/images/kubernetes-deployment/static_ip.png" alt="static ip configuration" width="600"><br>
+  <img src="../assets/images/kubernetes-deployment/static_ip.png" alt="static ip configuration" width="600"><br>
   <em>static ip configuration</em>
 </p>
 
@@ -146,7 +146,7 @@ timedatectl status
 Update `/etc/ntp.conf` on the other nodes so they sync from the primary server, then restart `ntp`:
 
 <p align="center">
-  <img src="assets/images/kubernetes-deployment/ntp_config.png" alt="ntp config" width="600"><br>
+  <img src="../assets/images/kubernetes-deployment/ntp_config.png" alt="ntp config" width="600"><br>
   <em>ntp config</em>
 </p>
 
@@ -220,7 +220,7 @@ sudo systemctl restart haproxy
 sudo systemctl status haproxy
 ```
 
-Edit the [configuration](../configs/environments/haproxy.cfg):
+Edit the [configuration](../../configs/environments/haproxy.cfg):
 
 ```sh
 sudo vi /etc/haproxy/haproxy.cfg

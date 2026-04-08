@@ -1,0 +1,18 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: monitor-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  duration: 8760h
+  renewBefore: 720h
+  commonName: monitor-ca
+  secretName: monitor-ca-secret
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: monitor-cluster-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io

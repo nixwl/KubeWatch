@@ -154,12 +154,12 @@ When using this flow, you do not need to create a static `PersistentVolume` manu
 
 ### 1. Deploy the RBAC and Provisioner
 
-Create [`nfs-rbac.yaml`](../examples/yaml/nfs-rbac.yaml)
+Create [`nfs-rbac.yaml`](../../examples/yaml/nfs-rbac.yaml)
 
 Apply and verify:
 
 ```sh
-kubectl apply -f nfs-provisioner.yaml
+kubectl apply -f nfs-monitor-rbac.yaml
 # 1. check service account
 kubectl get serviceaccount nfs-client-provisioner -n default
 # 2. check cluster role
@@ -170,12 +170,12 @@ kubectl get clusterrolebinding nfs-client-provisioner-clusterrolebinding
 kubectl describe clusterrolebinding nfs-client-provisioner-clusterrolebinding
 ```
 
-Create [`nfs-provisioner.yaml`](../examples/yaml/nfs-provisioner.yaml)
+Create [`nfs-provisioner.yaml`](../../examples/yaml/nfs-provisioner.yaml)
 
 Apply and verify:
 
 ```sh
-kubectl apply -f nfs-provisioner.yaml
+kubectl apply -f nfs-monitor-provisioner.yaml
 # check provisioner
 kubectl get deploy nfs-client-provisioner
 kubectl describe deploy nfs-client-provisioner
@@ -183,18 +183,18 @@ kubectl describe deploy nfs-client-provisioner
 
 ### 2. Create the StorageClass
 
-Create [`nfs-storageclass.yaml`](../examples/yaml/nfs-storageclass.yaml)
+Create [`nfs-storageclass.yaml`](../../examples/yaml/nfs-storageclass.yaml)
 
 Apply and verify:
 
 ```sh
-kubectl apply -f nfs-storageclass.yaml
+kubectl apply -f nfs-monitor-storageclass.yaml
 kubectl get storageclass
 ```
 
 ## 3. Create a PersistentVolumeClaim
 
-Create [`nfs-pvc.yaml`](../examples/yaml/nfs-pvc.yaml)
+Create [`nfs-pvc.yaml`](../../examples/yaml/nfs-pvc.yaml)
 
 Apply and verify:
 

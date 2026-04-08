@@ -28,9 +28,9 @@ spec:
             - name: NFS_SERVER
               value: 192.168.52.12
             - name: NFS_PATH
-              value: /data/nfs-data/producer/provisioner
+              value: /data/nfs-data/monitor/provisioner
       volumes:
         - name: nfs-client-root
           nfs:
             server: 192.168.52.12
-            path: /data/nfs-data/producer/provisioner
+            path: /data/nfs-data/monitor/provisioner

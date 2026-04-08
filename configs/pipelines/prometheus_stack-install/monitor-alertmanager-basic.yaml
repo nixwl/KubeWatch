@@ -1,0 +1,28 @@
+alertmanager:
+  alertmanagerSpec:
+    # config exteranl access URL
+    externalUrl: "https://alertmanager.example.com/"
+    scheme: "http"
+    # config resource limitition
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+    # storge configuration
+    storage:
+      volumeClaimTemplate:
+        metadata:
+          name: alertmanager-pv
+        spec:
+          storageClassName: nfs-client-storageclass
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+    # definition of PersistentVolumeClaim retention policy, default is retain(not delete)
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain

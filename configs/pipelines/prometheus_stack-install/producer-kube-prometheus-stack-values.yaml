@@ -1,0 +1,2504 @@
+additionalPrometheusRulesMap: {}
+alertmanager:
+  additionalLabels: {}
+  alertmanagerSpec:
+    additionalArgs: []
+    additionalConfig: {}
+    additionalConfigString: ""
+    additionalPeers: []
+    affinity: {}
+    alertmanagerConfigMatcherStrategy: {}
+    alertmanagerConfigNamespaceSelector: {}
+    alertmanagerConfigSelector: {}
+    alertmanagerConfiguration: {}
+    automountServiceAccountToken: true
+    clusterAdvertiseAddress: false
+    clusterGossipInterval: ""
+    clusterLabel: ""
+    clusterPeerTimeout: ""
+    clusterPushpullInterval: ""
+    configMaps: []
+    containers: []
+    dnsConfig: {}
+    dnsPolicy: ""
+    externalUrl: null
+    forceEnableClusterMode: false
+    image:
+      pullPolicy: IfNotPresent
+      registry: quay.io
+      repository: prometheus/alertmanager
+      sha: ""
+      tag: v0.30.0
+    initContainers: []
+    listenLocal: false
+    logFormat: logfmt
+    logLevel: info
+    minReadySeconds: 0
+    nodeSelector: {}
+    paused: false
+    persistentVolumeClaimRetentionPolicy: {}
+    podAntiAffinity: soft
+    podAntiAffinityTopologyKey: kubernetes.io/hostname
+    podMetadata: {}
+    portName: http-web
+    priorityClassName: ""
+    replicas: 1
+    resources: {}
+    retention: 120h
+    routePrefix: /
+    scheme: ""
+    secrets: []
+    securityContext:
+      fsGroup: 2000
+      runAsGroup: 2000
+      runAsNonRoot: true
+      runAsUser: 1000
+      seccompProfile:
+        type: RuntimeDefault
+    serviceName: null
+    storage: {}
+    tlsConfig: {}
+    tolerations: []
+    topologySpreadConstraints: []
+    useExistingSecret: false
+    volumeMounts: []
+    volumes: []
+    web: {}
+  annotations: {}
+  apiVersion: v2
+  config:
+    global:
+      resolve_timeout: 5m
+    inhibit_rules:
+    - equal:
+      - namespace
+      - alertname
+      source_matchers:
+      - severity = critical
+      target_matchers:
+      - severity =~ warning|info
+    - equal:
+      - namespace
+      - alertname
+      source_matchers:
+      - severity = warning
+      target_matchers:
+      - severity = info
+    - equal:
+      - namespace
+      source_matchers:
+      - alertname = InfoInhibitor
+      target_matchers:
+      - severity = info
+    - target_matchers:
+      - alertname = InfoInhibitor
+    receivers:
+    - name: "null"
+    route:
+      group_by:
+      - namespace
+      group_interval: 5m
+      group_wait: 30s
+      receiver: "null"
+      repeat_interval: 12h
+      routes:
+      - matchers:
+        - alertname = "Watchdog"
+        receiver: "null"
+    templates:
+    - /etc/alertmanager/config/*.tmpl
+  enableFeatures: []
+  enabled: false
+  extraSecret:
+    annotations: {}
+    data: {}
+  forceDeployDashboards: false
+  ingress:
+    annotations: {}
+    enabled: false
+    hosts: []
+    ingressClassName: ""
+    labels: {}
+    paths: []
+    tls: []
+  ingressPerReplica:
+    annotations: {}
+    enabled: false
+    hostDomain: ""
+    hostPrefix: ""
+    ingressClassName: ""
+    labels: {}
+    paths: []
+    tlsSecretName: ""
+    tlsSecretPerReplica:
+      enabled: false
+      prefix: alertmanager
+  namespaceOverride: ""
+  networkPolicy:
+    additionalIngress: []
+    egress:
+      enabled: false
+      rules: []
+    enableClusterRules: true
+    enabled: false
+    gateway:
+      namespace: ""
+      podLabels: {}
+    monitoringRules:
+      configReloader: true
+      prometheus: true
+    policyTypes:
+    - Ingress
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    unhealthyPodEvictionPolicy: AlwaysAllow
+  route:
+    main:
+      additionalRules: []
+      annotations: {}
+      apiVersion: gateway.networking.k8s.io/v1
+      enabled: false
+      filters: []
+      hostnames: []
+      httpsRedirect: false
+      kind: HTTPRoute
+      labels: {}
+      matches:
+      - path:
+          type: PathPrefix
+          value: /
+      parentRefs: []
+  secret:
+    annotations: {}
+  service:
+    additionalPorts: []
+    annotations: {}
+    clusterIP: ""
+    enabled: true
+    externalIPs: []
+    externalTrafficPolicy: Cluster
+    ipDualStack:
+      enabled: false
+      ipFamilies:
+      - IPv6
+      - IPv4
+      ipFamilyPolicy: PreferDualStack
+    labels: {}
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    nodePort: 30903
+    port: 9093
+    sessionAffinity: None
+    sessionAffinityConfig:
+      clientIP:
+        timeoutSeconds: 10800
+    targetPort: 9093
+    type: ClusterIP
+  serviceAccount:
+    annotations: {}
+    automountServiceAccountToken: true
+    create: true
+    name: ""
+  serviceMonitor:
+    additionalEndpoints: []
+    additionalLabels: {}
+    bearerTokenFile: null
+    enableHttp2: true
+    interval: "10s"
+    labelLimit: 0
+    labelNameLengthLimit: 0
+    labelValueLengthLimit: 0
+    metricRelabelings: []
+    proxyUrl: ""
+    relabelings: []
+    sampleLimit: 0
+    scheme: ""
+    selfMonitor: true
+    targetLimit: 0
+    tlsConfig: {}
+  servicePerReplica:
+    annotations: {}
+    enabled: false
+    externalTrafficPolicy: Cluster
+    loadBalancerSourceRanges: []
+    nodePort: 30904
+    port: 9093
+    targetPort: 9093
+    type: ClusterIP
+  stringConfig: ""
+  templateFiles: {}
+  tplConfig: false
+cleanPrometheusOperatorObjectNames: true
+commonLabels: {}
+coreDns:
+  enabled: true
+  service:
+    enabled: true
+    ipDualStack:
+      enabled: false
+      ipFamilies:
+      - IPv6
+      - IPv4
+      ipFamilyPolicy: PreferDualStack
+    port: 9153
+    targetPort: 9153
+  serviceMonitor:
+    additionalLabels: {}
+    enabled: true
+    interval: "10s"
+    jobLabel: jobLabel
+    labelLimit: 0
+    labelNameLengthLimit: 0
+    labelValueLengthLimit: 0
+    metricRelabelings:
+      - action: drop
+        regex: '.*_bucket$'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'coredns_build_info'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'coredns_dns_request_size_bytes_.*|coredns_dns_response_size_bytes_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'coredns_proxy_conn_cache_hits_total|coredns_proxy_conn_cache_misses_total'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'coredns_health_request_duration_seconds_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'coredns_hosts_entries|coredns_hosts_reload_timestamp_seconds'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'coredns_kubernetes_dns_programming_duration_seconds_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'coredns_plugin_enabled|coredns_local_localhost_requests_total'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'go_.*|process_.*'
+        sourceLabels: [__name__]
+    port: http-metrics
+    proxyUrl: ""
+    relabelings: []
+    sampleLimit: 0
+    selector: {}
+    targetLabels: []
+    targetLimit: 0
+crds:
+  enabled: true
+  global:
+    imagePullSecrets: []
+    imageRegistry: ""
+    rbac:
+      create: true
+      createAggregateClusterRoles: false
+  upgradeJob:
+    affinity: {}
+    annotations: {}
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      readOnlyRootFilesystem: true
+    enabled: false
+    env: {}
+    extraVolumeMounts: []
+    extraVolumes: []
+    forceConflicts: false
+    image:
+      busybox:
+        pullPolicy: IfNotPresent
+        registry: docker.io
+        repository: busybox
+        sha: ""
+        tag: latest
+      kubectl:
+        pullPolicy: IfNotPresent
+        registry: registry.k8s.io
+        repository: kubectl
+        sha: ""
+        tag: ""
+    labels: {}
+    nodeSelector: {}
+    podAnnotations: {}
+    podLabels: {}
+    podSecurityContext:
+      fsGroup: 65534
+      runAsGroup: 65534
+      runAsNonRoot: true
+      runAsUser: 65534
+      seccompProfile:
+        type: RuntimeDefault
+    resources: {}
+    serviceAccount:
+      annotations: {}
+      automountServiceAccountToken: true
+      create: true
+      labels: {}
+      name: ""
+    tolerations: []
+    topologySpreadConstraints: []
+customRules: {}
+defaultRules:
+  additionalAggregationLabels: []
+  additionalRuleAnnotations: {}
+  additionalRuleGroupAnnotations:
+    alertmanager: {}
+    configReloaders: {}
+    etcd: {}
+    general: {}
+    k8sContainerCpuUsageSecondsTotal: {}
+    k8sContainerMemoryCache: {}
+    k8sContainerMemoryRss: {}
+    k8sContainerMemorySwap: {}
+    k8sContainerResource: {}
+    k8sPodOwner: {}
+    kubeApiserverAvailability: {}
+    kubeApiserverBurnrate: {}
+    kubeApiserverHistogram: {}
+    kubeApiserverSlos: {}
+    kubeControllerManager: {}
+    kubePrometheusGeneral: {}
+    kubePrometheusNodeRecording: {}
+    kubeProxy: {}
+    kubeSchedulerAlerting: {}
+    kubeSchedulerRecording: {}
+    kubeStateMetrics: {}
+    kubelet: {}
+    kubernetesApps: {}
+    kubernetesResources: {}
+    kubernetesStorage: {}
+    kubernetesSystem: {}
+    network: {}
+    node: {}
+    nodeExporterAlerting: {}
+    nodeExporterRecording: {}
+    prometheus: {}
+    prometheusOperator: {}
+  additionalRuleGroupLabels:
+    alertmanager: {}
+    configReloaders: {}
+    etcd: {}
+    general: {}
+    k8sContainerCpuUsageSecondsTotal: {}
+    k8sContainerMemoryCache: {}
+    k8sContainerMemoryRss: {}
+    k8sContainerMemorySwap: {}
+    k8sContainerResource: {}
+    k8sPodOwner: {}
+    kubeApiserverAvailability: {}
+    kubeApiserverBurnrate: {}
+    kubeApiserverHistogram: {}
+    kubeApiserverSlos: {}
+    kubeControllerManager: {}
+    kubePrometheusGeneral: {}
+    kubePrometheusNodeRecording: {}
+    kubeProxy: {}
+    kubeSchedulerAlerting: {}
+    kubeSchedulerRecording: {}
+    kubeStateMetrics: {}
+    kubelet: {}
+    kubernetesApps: {}
+    kubernetesResources: {}
+    kubernetesStorage: {}
+    kubernetesSystem: {}
+    network: {}
+    node: {}
+    nodeExporterAlerting: {}
+    nodeExporterRecording: {}
+    prometheus: {}
+    prometheusOperator: {}
+  additionalRuleLabels: {}
+  annotations: {}
+  appNamespacesOperator: =~
+  appNamespacesTarget: .*
+  create: false
+  disabled: {}
+  keepFiringFor: ""
+  labels: {}
+  node:
+    fsSelector: fstype!=""
+  rules:
+    alertmanager: true
+    configReloaders: true
+    etcd: true
+    general: true
+    k8sContainerCpuUsageSecondsTotal: true
+    k8sContainerMemoryCache: true
+    k8sContainerMemoryRss: true
+    k8sContainerMemorySwap: true
+    k8sContainerMemoryWorkingSetBytes: true
+    k8sContainerResource: true
+    k8sPodOwner: true
+    kubeApiserverAvailability: true
+    kubeApiserverBurnrate: true
+    kubeApiserverHistogram: true
+    kubeApiserverSlos: true
+    kubeControllerManager: true
+    kubePrometheusGeneral: true
+    kubePrometheusNodeRecording: true
+    kubeProxy: true
+    kubeSchedulerAlerting: true
+    kubeSchedulerRecording: true
+    kubeStateMetrics: true
+    kubelet: true
+    kubernetesApps: true
+    kubernetesResources: true
+    kubernetesStorage: true
+    kubernetesSystem: true
+    network: true
+    node: true
+    nodeExporterAlerting: true
+    nodeExporterRecording: true
+    prometheus: true
+    prometheusOperator: true
+    windows: true
+  runbookUrl: https://runbooks.prometheus-operator.dev/runbooks
+extraManifests: null
+fullnameOverride: ""
+global:
+  cattle:
+    clusterId: c-w6gnz
+    clusterName: producer
+    rkePathPrefix: ""
+    rkeWindowsPathPrefix: ""
+    systemProjectId: p-lxk8l
+    url: https://rancher.example.com
+  imagePullSecrets: []
+  imageRegistry: ""
+  rbac:
+    create: true
+    createAggregateClusterRoles: false
+grafana:
+  additionalDataSources: []
+  admin:
+    existingSecret: ""
+    passwordKey: admin-password
+    userKey: admin-user
+  adminUser: admin
+  defaultDashboardsEditable: true
+  defaultDashboardsEnabled: true
+  defaultDashboardsInterval: 1m
+  defaultDashboardsTimezone: utc
+  deleteDatasources: []
+  enabled: false
+  extraConfigmapMounts: []
+  forceDeployDashboards: false
+  forceDeployDatasources: false
+  ingress:
+    annotations: {}
+    enabled: false
+    hosts: []
+    labels: {}
+    path: /
+    tls: []
+  namespaceOverride: ""
+  operator:
+    annotations: {}
+    dashboardsConfigMapRefEnabled: false
+    folder: General
+    folderRef: null
+    folderUID: null
+    matchLabels: {}
+    resyncPeriod: 10m
+  prune: false
+  rbac:
+    pspEnabled: false
+  service:
+    ipFamilies: []
+    ipFamilyPolicy: ""
+    portName: http-web
+  serviceAccount:
+    autoMount: true
+    create: true
+  serviceMonitor:
+    enabled: true
+    interval: "10s"
+    labels: {}
+    path: /metrics
+    relabelings: []
+    scheme: http
+    scrapeTimeout: "5s"
+    tlsConfig: {}
+  sidecar:
+    dashboards:
+      annotations: {}
+      enableNewTablePanelSyntax: false
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      multicluster:
+        etcd:
+          enabled: false
+        global:
+          enabled: false
+      provider:
+        allowUiUpdates: false
+      searchNamespace: ALL
+    datasources:
+      alertmanager:
+        enabled: true
+        handleGrafanaManagedAlerts: false
+        implementation: prometheus
+        name: Alertmanager
+        uid: alertmanager
+      annotations: {}
+      createPrometheusReplicasDatasources: false
+      defaultDatasourceEnabled: true
+      enabled: true
+      exemplarTraceIdDestinations: {}
+      httpMethod: POST
+      isDefaultDatasource: true
+      label: grafana_datasource
+      labelValue: "1"
+      name: Prometheus
+      prometheusServiceName: prometheus-operated
+      uid: prometheus
+kube-state-metrics:
+  affinity: {}
+  annotations: {}
+  automountServiceAccountToken: true
+  autosharding:
+    enabled: false
+  collectors:
+  - certificatesigningrequests
+  - configmaps
+  - cronjobs
+  - daemonsets
+  - deployments
+  - endpointslices
+  - horizontalpodautoscalers
+  - ingresses
+  - jobs
+  - leases
+  - limitranges
+  - mutatingwebhookconfigurations
+  - namespaces
+  - networkpolicies
+  - nodes
+  - persistentvolumeclaims
+  - persistentvolumes
+  - poddisruptionbudgets
+  - pods
+  - replicasets
+  - replicationcontrollers
+  - resourcequotas
+  - secrets
+  - services
+  - statefulsets
+  - storageclasses
+  - validatingwebhookconfigurations
+  - volumeattachments
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+    readOnlyRootFilesystem: true
+  containers: []
+  customLabels: {}
+  customResourceState:
+    config: {}
+    create: true
+    enabled: false
+    key: config.yaml
+    name: ""
+  dnsConfig: {}
+  dnsPolicy: ClusterFirst
+  env: []
+  extraArgs: []
+  extraManifests: []
+  global:
+    imagePullSecrets: []
+    imageRegistry: ""
+    rbac:
+      create: true
+      createAggregateClusterRoles: false
+  hostNetwork: false
+  image:
+    pullPolicy: IfNotPresent
+    registry: registry.k8s.io
+    repository: kube-state-metrics/kube-state-metrics
+    sha: ""
+    tag: ""
+  imagePullSecrets: []
+  initContainers: []
+  kubeRBACProxy:
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      readOnlyRootFilesystem: true
+    enabled: false
+    extraArgs: []
+    ignoreProbePaths: true
+    image:
+      pullPolicy: IfNotPresent
+      registry: quay.io
+      repository: brancz/kube-rbac-proxy
+      sha: ""
+      tag: v0.20.1
+    port: 9090
+    proxyEndpointsPort: 8888
+    resources: {}
+    volumeMounts: []
+  kubeconfig:
+    enabled: true
+    secret: null
+  labels: {}
+  livenessProbe:
+    failureThreshold: 3
+    httpGet:
+      httpHeaders: []
+      scheme: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 5
+  metricAllowlist: []
+  metricAnnotationsAllowList: []
+  metricDenylist: []
+  metricLabelsAllowlist: []
+  namespaceOverride: ""
+  namespaces: ""
+  namespacesDenylist: ""
+  networkPolicy:
+    enabled: false
+    flavor: kubernetes
+  nodeSelector: {}
+  podAnnotations: {}
+  podDisruptionBudget: {}
+  podLabels: {}
+  prometheus:
+    monitor:
+      additionalLabels: {}
+      annotations: {}
+      enabled: true
+      http:
+        bearerTokenFile: ""
+        bearerTokenSecret: {}
+        enableHttp2: false
+        honorLabels: true
+        interval: "10s"
+        metricRelabelings:
+          - action: drop
+            regex: '.*_bucket$'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_node_(annotations|labels|role|created|deletion_timestamp|info|status_addresses|spec_taint)'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_node_status_(allocatable|capacity);(hugepages_.*|pods|ephemeral_storage)'
+            sourceLabels: [__name__, resource]
+          - action: drop
+            regex: 'kube_node_status_condition;(false|unknown)'
+            sourceLabels: [__name__, status]
+          - action: drop
+            regex: 'kube_namespace_.*'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_pod_container_info|kube_pod_container_status_last_terminated_exitcode|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_last_terminated_timestamp|kube_pod_container_state_started|kube_pod_container_resource_requests|kube_pod_container_status_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_terminated'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_pod_init_container_.*'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_pod_info|kube_pod_created|kube_pod_deletion_timestamp|kube_pod_ips|kube_pod_labels|kube_pod_overhead_cpu_cores|kube_pod_overhead_memory_bytes|kube_pod_restart_policy|kube_pod_runtimeclass_name_info|kube_pod_scheduler|kube_pod_service_account|kube_pod_start_time|kube_pod_spec_volumes_persistentvolumeclaims_info|kube_pod_spec_volumes_persistentvolumeclaims_readonly'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_pod_status_container_ready_time|kube_pod_status_initialized_time|kube_pod_status_ready_time|kube_pod_status_reason|kube_pod_status_qos_class|kube_pod_status_scheduled|kube_pod_status_scheduled_time|kube_pod_status_unschedulable|kube_pod_status_unscheduled_time|kube_pod_tolerations'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_pod_status_ready;(false|unknown)'
+            sourceLabels: [__name__, status]
+          - action: drop
+            regex: 'kube_deployment_annotations|kube_deployment_created|kube_deployment_deletion_timestamp|kube_deployment_labels|kube_deployment_metadata_generation|kube_deployment_spec_paused|kube_deployment_spec_strategy_rollingupdate_max_surge|kube_deployment_spec_strategy_rollingupdate_max_unavailable|kube_deployment_status_observed_generation|kube_deployment_status_replicas|kube_deployment_status_replicas_unavailable|kube_deployment_status_replicas_ready|kube_deployment_status_replicas_updated'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_replicaset_.*|kube_statefulset_.*'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_daemonset_annotations|kube_daemonset_created|kube_daemonset_deletion_timestamp|kube_daemonset_labels|kube_daemonset_metadata_generation|kube_daemonset_status_current_number_scheduled|kube_daemonset_status_number_available|kube_daemonset_status_number_misscheduled|kube_daemonset_status_number_unavailable|kube_daemonset_status_observed_generation|kube_daemonset_status_updated_number_scheduled'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_job_annotations|kube_job_info|kube_job_labels|kube_job_owner|kube_job_complete|kube_job_created|kube_job_spec_active_deadline_seconds|kube_job_spec_completions|kube_job_spec_parallelism|kube_job_status_succeeded|kube_job_status_failed|kube_job_status_suspended|kube_job_status_completion_time'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_job_failed;(false|unknown)'
+            sourceLabels: [__name__,condition]
+          - action: drop
+            regex: 'kube_cronjob_annotations|kube_cronjob_created|kube_cronjob_info|kube_cronjob_labels|kube_cronjob_metadata_resource_version|kube_cronjob_next_schedule_time|kube_cronjob_spec_failed_job_history_limit|kube_cronjob_spec_starting_deadline_seconds|kube_cronjob_spec_successful_job_history_limit|kube_cronjob_spec_suspend|kube_cronjob_status_active'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_service_.*|kube_endpoint_.*|kube_ingress_.*|kube_networkpolicy_.*|kube_secret_.*|kube_configmap_.*|kube_storageclass_.*|kube_lease_.*|kube_validatingwebhookconfiguration_.*|kube_mutatingwebhookconfiguration_.*'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_persistentvolume_claim_ref|kube_persistentvolume_info|kube_persistentvolume_created'
+            sourceLabels: [__name__]
+        proxyUrl: ""
+        relabelings: []
+        scheme: ""
+        scrapeTimeout: "5s"
+        tlsConfig: {}
+      jobLabel: ""
+      labelLimit: 0
+      labelNameLengthLimit: 0
+      labelValueLengthLimit: 0
+      metrics:
+        bearerTokenFile: ""
+        bearerTokenSecret: {}
+        enableHttp2: false
+        honorLabels: true
+        interval: "10s"
+        metricRelabelings:
+          - action: drop
+            regex: '.*_bucket$'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_node_(annotations|labels|role|created|deletion_timestamp|info|status_addresses|spec_taint)'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_node_status_(allocatable|capacity);(hugepages_.*|pods|ephemeral_storage)'
+            sourceLabels: [__name__, resource]
+          - action: drop
+            regex: 'kube_node_status_condition;(false|unknown)'
+            sourceLabels: [__name__, status]
+          - action: drop
+            regex: 'kube_namespace_.*'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_pod_container_info|kube_pod_container_status_last_terminated_exitcode|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_last_terminated_timestamp|kube_pod_container_state_started|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_terminated'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_pod_init_container_.*'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_pod_info|kube_pod_created|kube_pod_deletion_timestamp|kube_pod_ips|kube_pod_labels|kube_pod_overhead_cpu_cores|kube_pod_overhead_memory_bytes|kube_pod_restart_policy|kube_pod_runtimeclass_name_info|kube_pod_scheduler|kube_pod_service_account|kube_pod_start_time|kube_pod_spec_volumes_persistentvolumeclaims_info|kube_pod_spec_volumes_persistentvolumeclaims_readonly'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_pod_status_container_ready_time|kube_pod_status_initialized_time|kube_pod_status_ready_time|kube_pod_status_reason|kube_pod_status_qos_class|kube_pod_status_scheduled|kube_pod_status_scheduled_time|kube_pod_status_unschedulable|kube_pod_status_unscheduled_time|kube_pod_tolerations'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_pod_status_ready;(false|unknown)'
+            sourceLabels: [__name__, status]
+          - action: drop
+            regex: 'kube_deployment_annotations|kube_deployment_created|kube_deployment_deletion_timestamp|kube_deployment_labels|kube_deployment_metadata_generation|kube_deployment_spec_paused|kube_deployment_spec_strategy_rollingupdate_max_surge|kube_deployment_spec_strategy_rollingupdate_max_unavailable|kube_deployment_status_observed_generation|kube_deployment_status_replicas|kube_deployment_status_replicas_unavailable|kube_deployment_status_replicas_ready|kube_deployment_status_replicas_updated'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_replicaset_.*|kube_statefulset_.*'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_daemonset_annotations|kube_daemonset_created|kube_daemonset_deletion_timestamp|kube_daemonset_labels|kube_daemonset_metadata_generation|kube_daemonset_status_current_number_scheduled|kube_daemonset_status_number_available|kube_daemonset_status_number_misscheduled|kube_daemonset_status_number_unavailable|kube_daemonset_status_observed_generation|kube_daemonset_status_updated_number_scheduled'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_job_annotations|kube_job_info|kube_job_labels|kube_job_owner|kube_job_complete|kube_job_created|kube_job_spec_active_deadline_seconds|kube_job_spec_completions|kube_job_spec_parallelism|kube_job_status_succeeded|kube_job_status_failed|kube_job_status_suspended|kube_job_status_completion_time'
+            sourceLabels: [__name__]
+          - action: drop
+            regex: 'kube_job_failed;(false|unknown)'
+            sourceLabels: [__name__,condition]
+          - action: drop
+            regex: 'kube_cronjob_annotations|kube_cronjob_created|kube_cronjob_info|kube_cronjob_labels|kube_cronjob_metadata_resource_version|kube_cronjob_next_schedule_time|kube_cronjob_spec_failed_job_history_limit|kube_cronjob_spec_starting_deadline_seconds|kube_cronjob_spec_successful_job_history_limit|kube_cronjob_spec_suspend|kube_cronjob_status_active'
+            sourceLabels: [__name__]
+        proxyUrl: ""
+        relabelings: []
+        scheme: ""
+        scrapeTimeout: "5s"
+        tlsConfig: {}
+      namespace: ""
+      namespaceSelector: []
+      podTargetLabels: []
+      sampleLimit: 0
+      selectorOverride: {}
+      targetLabels: []
+      targetLimit: 0
+    scrapeconfig:
+      additionalLabels: {}
+      annotations: {}
+      enableHttp2: false
+      enabled: false
+      honorLabels: true
+      jobName: kube-state-metrics
+      labelLimit: 0
+      labelNameLengthLimit: 0
+      labelValueLengthLimit: 0
+      metricRelabelings: []
+      proxyUrl: ""
+      relabelings: []
+      sampleLimit: 0
+      scheme: ""
+      scrapeInterval: "10s"
+      scrapeTimeout: "5s"
+      staticConfigLabels: {}
+      targetLimit: 0
+      tlsConfig: {}
+  prometheusScrape: false
+  rbac:
+    create: true
+    extraRules: []
+    useClusterRole: true
+  readinessProbe:
+    failureThreshold: 3
+    httpGet:
+      httpHeaders: []
+      scheme: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 5
+  releaseLabel: true
+  releaseNamespace: false
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+  revisionHistoryLimit: 10
+  securityContext:
+    enabled: true
+    fsGroup: 65534
+    runAsGroup: 65534
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  selectorOverride: {}
+  selfMonitor:
+    enabled: false
+  service:
+    annotations: {}
+    clusterIP: ""
+    ipDualStack:
+      enabled: false
+      ipFamilies:
+      - IPv6
+      - IPv4
+      ipFamilyPolicy: PreferDualStack
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    nodePort: 0
+    port: 8080
+    type: ClusterIP
+  serviceAccount:
+    annotations: {}
+    automountServiceAccountToken: true
+    create: true
+    imagePullSecrets: []
+    name: null
+  startupProbe:
+    enabled: false
+    failureThreshold: 3
+    httpGet:
+      httpHeaders: []
+      scheme: http
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 5
+  tolerations: []
+  topologySpreadConstraints: []
+  verticalPodAutoscaler:
+    controlledResources: []
+    enabled: false
+    maxAllowed: {}
+    minAllowed: {}
+  volumeMounts: []
+  volumes: []
+kubeApiServer:
+  enabled: true
+  serviceMonitor:
+    additionalLabels: {}
+    enabled: true
+    interval: "10s"
+    jobLabel: component
+    labelLimit: 0
+    labelNameLengthLimit: 0
+    labelValueLengthLimit: 0
+    metricRelabelings:
+    kubeApiServer:
+  enabled: true
+  serviceMonitor:
+    metricRelabelings:
+    - action: drop
+      regex: (etcd_request|apiserver_request_slo|apiserver_request_sli|apiserver_request)_duration_seconds_bucket;(0\.15|0\.2|0\.3|0\.35|0\.4|0\.45|0\.6|0\.7|0\.8|0\.9|1\.25|1\.5|1\.75|2|3|3\.5|4|4\.5|6|7|8|9|15|20|40|45|50)(\.0)?
+      sourceLabels:
+      - __name__
+      - le
+    - action: drop
+      regex: '.*_bucket$'
+      sourceLabels: [__name__]
+    - action: drop
+      regex: 'grpc_client_.*|rest_client_.*|workqueue_.*'
+      sourceLabels: [__name__]
+    - action: drop
+      regex: 'registered_metrics_total|hidden_metrics_total|disabled_metrics_total'
+      sourceLabels: [__name__]
+    - action: drop
+      regex: 'kubernetes_build_info|kubernetes_feature_enabled'
+      sourceLabels: [__name__]
+    - action: drop
+      regex: 'go_cgo_.*|go_cpu_.*|go_gc_.*|go_memory_.*|go_memstats_.*|go_goroutines|go_sched_.*|go_threads|go_info|process_.*|go_godebug_.*|go_sync_mutex_wait_total_seconds_total'
+      sourceLabels: [__name__]
+    - action: drop
+      regex: 'k3s_.*|lasso_.*'
+      sourceLabels: [__name__]
+    - action: drop
+      regex: 'aggregator_discovery_.*|apiserver_conversion_webhook_request_total|apiextensions_openapi_v2_.*|apiextensions_openapi_v3_.*|apiserver_admission_match_condition_evaluation_seconds_.*|apiserver_admission_webhook_admission_duration_seconds_.*|authentication_duration_seconds_.*|apiserver_admission_step_admission_duration_seconds_.*|apiserver_admission_step_admission_duration_seconds_summary|authorization_duration_seconds_.*|apiserver_delegated_authn_request_duration_seconds_.*|apiserver_delegated_authz_request_duration_seconds_.*|apiserver_longrunning_requests|apiserver_request_aborts_total|apiserver_flowcontrol_request_wait_duration_seconds_.*|apiserver_flowcontrol_current_inqueue_requests|apiserver_flowcontrol_current_executing_requests|apiserver_flowcontrol_request_execution_seconds_.*|apiserver_flowcontrol_demand_seats_smoothed|apiserver_storage_events_received_total|apiserver_watch_events_total|apiserver_watch_cache_read_wait_seconds_.*|apiserver_cache_list_returned_objects_total|authentication_token_cache_request_duration_seconds_.*|apiserver_egress_dialer_dial_duration_seconds_.*|field_validation_request_duration_seconds_.*|authenticated_user_requests|pod_security_evaluations_total|pod_security_exemptions_total|serviceaccount_invalid_legacy_auto_token_uses_total|serviceaccount_legacy_auto_token_uses_total|serviceaccount_legacy_manual_token_uses_total|serviceaccount_legacy_tokens_total|serviceaccount_valid_tokens_total|apiserver_authorization_decisions_total|authorization_attempts_total|apiserver_requested_deprecated_apis|apiserver_response_sizes_.*|apiserver_selfrequest_total|apiserver_delegated_authn_request_total|apiserver_delegated_authz_request_total|apiserver_request_body_size_bytes_.*|apiserver_request_filter_duration_seconds_.*|apiserver_request_timestamp_comparison_time_.*|apiserver_flowcontrol_request_queue_length_after_enqueue_.*|apiserver_flowcontrol_nominal_limit_seats|apiserver_flowcontrol_lower_limit_seats|apiserver_flowcontrol_upper_limit_seats|apiserver_flowcontrol_target_seats|apiserver_flowcontrol_target_seats|apiserver_flowcontrol_seat_fair_frac|apiserver_flowcontrol_dispatch_r|apiserver_flowcontrol_current_r|apiserver_flowcontrol_latest_s|apiserver_flowcontrol_next_s_bounds|apiserver_flowcontrol_next_discounted_s_bounds|apiserver_flowcontrol_demand_seats_(sum|count|average|stdev)|apiserver_flowcontrol_priority_level_request_utilization_.*|apiserver_flowcontrol_read_vs_write_current_requests_.*|apiserver_flowcontrol_demand_seats_high_watermark|apiserver_flowcontrol_work_estimated_seats_.*|apiserver_flowcontrol_watch_count_samples_.*|apiserver_storage_data_key_generation_duration_seconds_.*|apiserver_storage_data_key_generation_failures_total|apiserver_storage_envelope_transformation_cache_misses_total|apiserver_storage_list_evaluated_objects_total|apiserver_storage_list_fetched_objects_total|apiserver_storage_list_returned_objects_total|apiserver_storage_objects|apiserver_watch_events_sizes_.*|watch_cache_capacity|watch_cache_capacity_increase_total|apiserver_watch_cache_resource_version|apiserver_watch_cache_events_received_total|apiserver_watch_cache_events_dispatched_total|apiserver_cache_list_fetched_objects_total|apiserver_envelope_encryption_dek_cache_fill_percent|authentication_token_cache_fetch_total|cardinality_enforcement_unexpected_categorizations_total|apiserver_cel_compilation_duration_seconds_.*|apiserver_cel_evaluation_duration_seconds_.*|apiserver_client_certificate_expiration_seconds|apiserver_tls_handshake_errors_total|apiserver_kube_aggregator_x509_insecure_sha1_total|apiserver_kube_aggregator_x509_missing_san_total|apiserver_webhooks_x509_insecure_sha1_total|apiserver_webhooks_x509_missing_san_total|apiserver_egress_dialer_dial_start_total|kube_apiserver_nodeport_allocator_allocated_ports|kube_apiserver_nodeport_allocator_available_ports|kube_apiserver_pod_logs_backend_tls_failure_total|kube_apiserver_pod_logs_insecure_backend_total|endpoint_slice_controller_syncs|endpoint_slice_controller_num_endpoint_slices|endpoint_slice_controller_desired_endpoint_slices|endpoint_slice_controller_endpoints_desired|endnt_slice_controller_changes|endpoint_slice_controller_endpoints_added_per_sync_.*|endpoint_slice_controller_endpoints_removed_per_sync_.*|endpoint_slice_controller_endpointslices_changed_per_sync_.*|endpoint_slice_mirroring_controller_num_endpoint_slices|endpoint_slice_mirroring_controller_desired_endpoint_slices|endpoint_slice_mirroring_controller_endpoints_sync_duration_.*|endpoint_slice_mirroring_controller_endpoints_desired|endpoint_slice_mirroring_controller_endpoints_added_per_sync_.*|endpoint_slice_mirroring_controller_endpoints_removed_per_sync_.*|endpoint_slice_mirroring_controller_endpoints_updated_per_sync_.*|endpoint_slice_mirroring_controller_addresses_skipped_per_sync_.*|service_controller_loadbalancer_sync_total|service_controller_nodesync_error_total|service_controller_nodesync_latency_seconds_(sum|count)|service_controller_update_loadbalancer_host_latency_seconds_(sum|count)|node_authorizer_graph_actions_duration_seconds_.*|node_collector_zone_health|node_controller_cloud_provider_taint_removal_delay_seconds_.*|node_controller_initial_node_sync_delay_seconds_.*|node_collector_evictions_total|node_collector_unhealthy_nodes_in_zone|node_collector_zone_size|node_collector_update_node_health_duration_seconds_(sum|count)|node_collector_update_all_nodes_health_duration_seconds_(sum|count)|node_ipam_controller_cidrset_cidrs_allocations_total|node_ipam_controller_cidrset_usage_cidrs|node_ipam_controller_cirdset_max_cidrs|ephemeral_volume_controller_create_total|ephemeral_volume_controller_create_failures_total|retroactive_storageclass_total|retroactive_storageclass_errors_total|cronjob_controller_job_creation_skew_duration_seconds_.*|replicaset_controller_sorting_deletion_age_ratio_.*|taint_eviction_controller_pod_deletions_total|taint_eviction_controller_pod_deletion_duration_seconds_.*|ttl_after_finished_controller_job_deletion_duration_seconds_.*|garbagecollector_controller_resources_sync_error_total|root_ca_cert_publisher_sync_duration_seconds_.*|root_ca_cert_publisher_sync_total|running_managed_controllers|scheduler_plugin_evaluation_total|scheduler_event_handling_duration_seconds_.*|scheduler_pending_pods|scheduler_pod_scheduling_attempts_.*|scheduler_preemption_victims_.*|scheduler_scheduler_cache_size|scheduler_scheduling_algorithm_duration_seconds_.*|kubelet_http_inflight_requests|kubelet_http_requests_total|kubelet_http_requests_duration_seconds_.*|kubelet_lifecycle_handler_http_fallbacks_total|reconstruct_volume_operations_total|reconstruct_volume_operations_errors_total|force_cleaned_failed_volume_operations_total|force_cleaned_failed_volume_operation_errors_total|kubelet_orphan_pod_cleaned_volumes|kubelet_orphan_pod_cleaned_volumes_errors|kubelet_volume_metric_collection_duration_seconds_.*|storage_operation_duration_seconds_.*|volume_operation_total_seconds_.*|kubelet_desired_pods|kubelet_active_pods|kubelet_running_pods|kubelet_running_containers|kubelet_working_pods|kubelet_mirror_pods|kubelet_managed_ephemeral_containers|kubelet_cgroup_version|kubelet_cgroup_manager_duration_seconds_.*|kubelet_cpu_manager_pinning_requests_total|kubelet_cpu_manager_pinning_errors_total|kubelet_memory_manager_pinning_requests_total| kubelet_memory_manager_pinning_errors_total|kubelet_topology_manager_admission_requests_total|kubelet_topology_manager_admission_errors_total|kubelet_topology_manager_admission_duration_ms_.*|kubelet_runtime_operations_total|kubelet_runtime_operations_duration_seconds_.*|kubelet_docker_operations_total|kubelet_docker_operations_duration_seconds_.*|kubelet_network_plugin_operations_total|kubelet_network_plugin_operations_errors_total|kubelet_pleg_last_seen_seconds|kubelet_pleg_relist_interval_seconds_(sum|count)|kubelet_pleg_relist_duration_seconds_(sum|count)|kubelet_pleg_discard_events|kubelet_evented_pleg_connection_success_count|kubelet_evented_pleg_connection_error_count|kubelet_evented_pleg_connection_latency_seconds_(sum|count)|kubelet_pod_start_duration_seconds_(sum|count)|kubelet_pod_status_sync_duration_seconds_(sum|count)|kubelet_started_pods_total|kubelet_started_pods_errors_total|kubelet_first_network_pod_start_sli_duration_seconds|kubelet_node_name|kubelet_container_log_filesystem_used_bytes|kubelet_graceful_shutdown_start_time_seconds|kubelet_graceful_shutdown_end_time_seconds|kubelet_orphaned_runtime_pods_total|kubelet_restarted_pods_total|kubelet_sleep_action_terminated_early_total|kubeproxy_iptables_ct_state_invalid_dropped_packets_total|kubeproxy_iptables_localhost_nodeports_accepted_packets_total|kubeproxy_network_programming_duration_seconds_(sum|count)|kubeproxy_sync_proxy_rules_duration_seconds_(sum|count)|kubeproxy_sync_full_proxy_rules_duration_seconds_(sum|count)|kubeproxy_sync_partial_proxy_rules_duration_seconds_(sum|count)|kubeproxy_sync_proxy_rules_service_changes_total|kubeproxy_sync_proxy_rules_endpoint_changes_total|kubeproxy_sync_proxy_rules_iptables_last|kubeproxy_sync_proxy_rules_last_queued_timestamp_seconds|kubeproxy_sync_proxy_rules_service_changes_pending|kubeproxy_sync_proxy_rules_endpoint_changes_pending|kubeproxy_sync_proxy_rules_iptables_total|kubeproxy_sync_proxy_rules_iptables_restore_failures_total|kubeproxy_sync_proxy_rules_iptables_partial_restore_failures_total|kubeproxy_sync_proxy_rules_last_timestamp_seconds|kubeproxy_sync_proxy_rules_no_local_endpoints_total|kube_router_build_info|kube_router_controller_iptables_v6_save_time_.*|kube_router_controller_iptables_v6_restore_time_.*|kube_router_controller_iptables_sync_time_(sum|count)|kube_router_controller_iptables_v4_restore_time_(sum|count)|kube_router_controller_policy_ipset_v6_restore_time_.*|kube_router_controller_policy_chains|kube_router_controller_policy_ipsets|kube_router_controller_policy_ipset_v4_restore_time_(sum|count)|kubelet_memory_manager_pinning_errors_total|kubelet_node_startup_duration_seconds|kubelet_node_startup_pre_kubelet_duration_seconds|kubelet_node_startup_registration_duration_seconds|kubelet_node_startup_pre_registration_duration_seconds|kubelet_node_startup_post_registration_duration_seconds|etcd_bookmark_counts|etcd_request_duration_seconds_.*|etcd_request_errors_total|etcd_lease_object_counts_.*|etcd_requests_total|scheduler_plugin_execution_duration_seconds_.*|scheduler_framework_extension_point_duration_seconds_.*|scheduler_goroutines|scheduler_scheduling_attempt_duration_seconds_.*|scheduler_schedule_attempts_total|scheduler_queue_incoming_pods_total|scheduler_pod_scheduling_sli_duration_seconds_.*|volume_manager_total_volumes|apiextensions_apiserver_validation_ratcheting_seconds_.*|kubelet_volume_stats_capacity_bytes|kubelet_volume_stats_available_bytes|kube_persistentvolume_status_phase|kubelet_volume_stats_used_bytes|kubelet_volume_stats_inodes|kubelet_volume_stats_inodes_used|kubelet_volume_stats_inodes_free'
+      sourceLabels: [__name__]
+    proxyUrl: ""
+    relabelings: []
+    sampleLimit: 0
+    selector:
+      matchLabels:
+        component: apiserver
+        provider: kubernetes
+    targetLabels: []
+    targetLimit: 0
+  tlsConfig:
+    insecureSkipVerify: false
+    serverName: kubernetes
+kubeControllerManager:
+  enabled: true
+  endpoints:
+    - 192.168.52.3
+    - 192.168.52.6
+  jobNameOverride: ""
+  service:
+    enabled: true
+    ipDualStack:
+      enabled: false
+      ipFamilies:
+      - IPv6
+      - IPv4
+      ipFamilyPolicy: PreferDualStack
+    port: 10257
+    targetPort: 10257
+  serviceMonitor:
+    additionalLabels: {}
+    enabled: true
+    https: null
+    insecureSkipVerify: null
+    interval: "10s"
+    jobLabel: jobLabel
+    labelLimit: 0
+    labelNameLengthLimit: 0
+    labelValueLengthLimit: 0
+    metricRelabelings:
+      - action: drop
+        regex: '.*_bucket$'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'grpc_client_.*|rest_client_.*|workqueue_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'registered_metrics_total|hidden_metrics_total|disabled_metrics_total'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'kubernetes_build_info|kubernetes_feature_enabled'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'go_cgo_.*|go_cpu_.*|go_gc_.*|go_memory_.*|go_memstats_.*|go_goroutines|go_sched_.*|go_threads|go_info|process_.*|go_godebug_.*|go_sync_mutex_wait_total_seconds_total'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'k3s_.*|lasso_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'aggregator_.*|apiextensions_apiserver_validation_ratcheting_seconds_.*|apiserver_conversion_webhook_duration_seconds_.*|apiserver_conversion_webhook_request_total|apiextensions_openapi_v2_.*|apiextensions_openapi_v3_.*|apiserver_admission_controller_admission_duration_seconds_.*|apiserver_admission_match_condition_evaluation_seconds_.*|apiserver_admission_step_admission_duration_seconds_.*|apiserver_admission_step_admission_duration_seconds_summary|apiserver_admission_webhook_admission_duration_seconds_.*|apiserver_admission_webhook_request_total|field_validation_request_duration_seconds_.*|pod_security_evaluations_total|pod_security_exemptions_total|authenticated_user_requests|authentication_attempts|authentication_duration_seconds_.*|serviceaccount_invalid_legacy_auto_token_uses_total|serviceaccount_legacy_auto_token_uses_total|serviceaccount_legacy_manual_token_uses_total|serviceaccount_legacy_tokens_total|serviceaccount_valid_tokens_total|serviceaccount_stale_tokens_total|apiserver_authorization_decisions_total|authorization_attempts_total|authorization_duration_seconds_.*|apiserver_requested_deprecated_apis|apiserver_response_sizes_.*|apiserver_selfrequest_total|apiserver_current_inflight_requests|apiserver_current_inqueue_requests|apiserver_request_total|apiserver_delegated_authn_request_duration_seconds_.*|apiserver_delegated_authz_request_duration_seconds_.*|apiserver_delegated_authn_request_total|apiserver_delegated_authz_request_total|apiserver_request_body_size_bytes_.*|apiserver_request_filter_duration_seconds_.*|apiserver_request_timestamp_comparison_time_.*|apiserver_longrunning_requests|apiserver_request_aborts_total|apiserver_request_sli_duration_seconds_.*|apiserver_request_duration_seconds_.*|apiserver_flowcontrol_current_executing_requests|apiserver_flowcontrol_current_executing_seats|apiserver_flowcontrol_request_execution_seconds_.*|apiserver_flowcontrol_request_queue_length_after_enqueue_.*|apiserver_flowcontrol_current_inqueue_requests|apiserver_flowcontrol_current_inqueue_seats|apiserver_flowcontrol_request_wait_duration_seconds_.*|apiserver_flowcontrol_nominal_limit_seats|apiserver_flowcontrol_lower_limit_seats|apiserver_flowcontrol_upper_limit_seats|apiserver_flowcontrol_target_seats|apiserver_flowcontrol_target_seats|apiserver_flowcontrol_seat_fair_frac|apiserver_flowcontrol_dispatch_r|apiserver_flowcontrol_current_r|apiserver_flowcontrol_latest_s|apiserver_flowcontrol_next_s_bounds|apiserver_flowcontrol_next_discounted_s_bounds|apiserver_flowcontrol_current_limit_seats|apiserver_flowcontrol_demand_seats_(sum|count|average|stdev)|apiserver_flowcontrol_priority_level_request_utilization_.*|apiserver_flowcontrol_read_vs_write_current_requests_.*|apiserver_flowcontrol_demand_seats_high_watermark|apiserver_flowcontrol_demand_seats_smoothed|apiserver_flowcontrol_priority_level_seat_utilization_.*|apiserver_flowcontrol_work_estimated_seats_.*|apiserver_flowcontrol_watch_count_samples_.*|apiserver_flowcontrol_dispatched_requests_total|apiserver_flowcontrol_request_concurrency_in_use|apiserver_storage_data_key_generation_duration_seconds_.*|apiserver_storage_data_key_generation_failures_total|kubelet_cgroup_manager_duration_seconds_.*|apiserver_storage_envelope_transformation_cache_misses_total|apiserver_storage_events_received_total|apiserver_storage_list_evaluated_objects_total|apiserver_storage_list_fetched_objects_total|apiserver_storage_list_returned_objects_total|apiserver_storage_objects|apiserver_storage_list_total|apiserver_storage_size_bytes|apiserver_watch_events_sizes_.*|watch_cache_capacity|watch_cache_capacity_increase_total|apiserver_watch_cache_resource_version|apiserver_watch_cache_events_received_total|apiserver_watch_cache_events_dispatched_total|apiserver_watch_cache_initializations_total|apiserver_watch_cache_read_wait_seconds_.*|apiserver_watch_cache_consistent_read_total|apiserver_watch_events_total|apiserver_cache_list_fetched_objects_total|apiserver_cache_list_total|apiserver_cache_list_returned_objects_total|apiserver_envelope_encryption_dek_cache_fill_percent|authentication_token_cache_fetch_total|authentication_token_cache_request_total|authentication_token_cache_active_fetch_count|authentication_token_cache_request_duration_seconds_.*|apiserver_audit_requests_rejected_total|apiserver_audit_event_total|cardinality_enforcement_unexpected_categorizations_total|apiserver_cel_compilation_duration_seconds_.*|apiserver_cel_evaluation_duration_seconds_.*|apiserver_client_certificate_expiration_seconds|apiserver_tls_handshake_errors_total|apiserver_kube_aggregator_x509_insecure_sha1_total|apiserver_kube_aggregator_x509_missing_san_total|apiserver_webhooks_x509_insecure_sha1_total|apiserver_webhooks_x509_missing_san_total|apiserver_clusterip_repair_reconcile_errors_total|apiserver_clusterip_repair_reconcile_errors_total|apiserver_egress_dialer_dial_start_total|apiserver_egress_dialer_dial_duration_seconds_.*|apiserver_init_events_total|kube_apiserver_nodeport_allocator_allocated_ports|kube_apiserver_nodeport_allocator_available_ports|kube_apiserver_pod_logs_backend_tls_failure_total|kube_apiserver_pod_logs_insecure_backend_total|endnt_slice_controller_changes|endpoint_slice_controller_endpoints_added_per_sync_.*|endpoint_slice_controller_endpoints_removed_per_sync_.*|endpoint_slice_controller_endpointslices_changed_per_sync_.*|endpoint_slice_mirroring_controller_endpoints_desired|endpoint_slice_mirroring_controller_endpoints_added_per_sync_.*|endpoint_slice_mirroring_controller_endpoints_removed_per_sync_.*|endpoint_slice_mirroring_controller_endpoints_updated_per_sync_.*|endpoint_slice_mirroring_controller_addresses_skipped_per_sync_.*|service_controller_loadbalancer_sync_total|node_collector_zone_health|node_controller_cloud_provider_taint_removal_delay_seconds_.*|node_controller_initial_node_sync_delay_seconds_.*|scheduler_plugin_evaluation_total|scheduler_event_handling_duration_seconds_.*|scheduler_pending_pods|scheduler_pod_scheduling_attempts_.*|scheduler_preemption_victims_.*|scheduler_scheduler_cache_size|scheduler_scheduling_algorithm_duration_seconds_.*|kubelet_http_inflight_requests|kubelet_http_requests_total|kubelet_http_requests_duration_seconds_.*|kubelet_lifecycle_handler_http_fallbacks_total|reconstruct_volume_operations_total|reconstruct_volume_operations_errors_total|force_cleaned_failed_volume_operations_total|force_cleaned_failed_volume_operation_errors_total|kubelet_orphan_pod_cleaned_volumes|kubelet_orphan_pod_cleaned_volumes_errors|kubelet_volume_metric_collection_duration_seconds_.*|storage_operation_duration_seconds_.*|volume_operation_total_seconds_.*|kubelet_desired_pods|kubelet_active_pods|kubelet_running_pods|kubelet_running_containers|kubelet_working_pods|kubelet_mirror_pods|kubelet_managed_ephemeral_containers|kubelet_cgroup_version|kubelet_cpu_manager_pinning_requests_total|kubelet_cpu_manager_pinning_errors_total|kubelet_memory_manager_pinning_requests_total| kubelet_memory_manager_pinning_errors_total|kubelet_topology_manager_admission_requests_total|kubelet_topology_manager_admission_errors_total|kubelet_runtime_operations_total|kubelet_runtime_operations_duration_seconds_.*|kubelet_docker_operations_total|kubelet_docker_operations_duration_seconds_.*|kubelet_network_plugin_operations_total|kubelet_network_plugin_operations_errors_total|kubelet_pleg_last_seen_seconds|kubelet_pleg_relist_interval_seconds_(sum|count)|kubelet_pleg_relist_duration_seconds_(sum|count)|kubelet_pleg_discard_events|kubelet_evented_pleg_connection_success_count|kubelet_evented_pleg_connection_error_count|kubelet_evented_pleg_connection_latency_seconds_(sum|count)|kubelet_pod_start_duration_seconds_(sum|count)|kubelet_pod_status_sync_duration_seconds_(sum|count)|kubelet_started_pods_total|kubelet_started_pods_errors_total|kubelet_first_network_pod_start_sli_duration_seconds|kubelet_node_name|kubelet_topology_manager_admission_duration_ms_.*|kubelet_container_log_filesystem_used_bytes|kubelet_graceful_shutdown_start_time_seconds|kubelet_graceful_shutdown_end_time_seconds|kubelet_orphaned_runtime_pods_total|kubelet_restarted_pods_total|kubelet_sleep_action_terminated_early_total|kubeproxy_iptables_ct_state_invalid_dropped_packets_total|kubeproxy_iptables_localhost_nodeports_accepted_packets_total|kubeproxy_network_programming_duration_seconds_(sum|count)|kubeproxy_sync_proxy_rules_duration_seconds_(sum|count)|kubeproxy_sync_full_proxy_rules_duration_seconds_(sum|count)|kubeproxy_sync_partial_proxy_rules_duration_seconds_(sum|count)|kubeproxy_sync_proxy_rules_service_changes_total|kubeproxy_sync_proxy_rules_endpoint_changes_total|kubeproxy_sync_proxy_rules_iptables_last|kubeproxy_sync_proxy_rules_last_queued_timestamp_seconds|kubeproxy_sync_proxy_rules_service_changes_pending|kubeproxy_sync_proxy_rules_endpoint_changes_pending|kubeproxy_sync_proxy_rules_iptables_total|kubeproxy_sync_proxy_rules_iptables_restore_failures_total|kubeproxy_sync_proxy_rules_iptables_partial_restore_failures_total|kubeproxy_sync_proxy_rules_last_timestamp_seconds|kubeproxy_sync_proxy_rules_no_local_endpoints_total|kube_router_build_info|kube_router_controller_iptables_v6_save_time_.*|kube_router_controller_iptables_v6_restore_time_.*|kube_router_controller_iptables_sync_time_(sum|count)|kube_router_controller_iptables_v4_restore_time_(sum|count)|kube_router_controller_policy_ipset_v6_restore_time_.*|kube_router_controller_policy_chains|kube_router_controller_policy_ipsets|kube_router_controller_policy_ipset_v4_restore_time_(sum|count)|kubelet_memory_manager_pinning_errors_total|kubelet_node_startup_duration_seconds|kubelet_node_startup_pre_kubelet_duration_seconds|kubelet_node_startup_registration_duration_seconds|kubelet_node_startup_pre_registration_duration_seconds|kubelet_node_startup_post_registration_duration_seconds|etcd_bookmark_counts|etcd_request_duration_seconds_.*|etcd_request_errors_total|etcd_lease_object_counts_.*|etcd_requests_total|scheduler_plugin_execution_duration_seconds_.*|scheduler_framework_extension_point_duration_seconds_.*|scheduler_goroutines|scheduler_scheduling_attempt_duration_seconds_.*|scheduler_schedule_attempts_total|scheduler_queue_incoming_pods_total|scheduler_pod_scheduling_sli_duration_seconds_.*|volume_manager_total_volumes|kubelet_volume_stats_capacity_bytes|kubelet_volume_stats_available_bytes|kube_persistentvolume_status_phase|kubelet_volume_stats_used_bytes|kubelet_volume_stats_inodes|kubelet_volume_stats_inodes_used|kubelet_volume_stats_inodes_free|endpoint_slice_controller_endpoints_desired|endpoint_slice_mirroring_controller_endpoints_sync_duration_.*|service_controller_nodesync_latency_seconds_(sum|count)|service_controller_update_loadbalancer_host_latency_seconds_(sum|count)|node_collector_zone_size|node_collector_update_node_health_duration_seconds_(sum|count)|node_collector_update_all_nodes_health_duration_seconds_(sum|count)|retroactive_storageclass_total|retroactive_storageclass_errors_total|replicaset_controller_sorting_deletion_age_ratio_.*|taint_eviction_controller_pod_deletion_duration_seconds_.*|ttl_after_finished_controller_job_deletion_duration_seconds_.*|root_ca_cert_publisher_sync_duration_seconds_.*'
+        sourceLabels: [__name__]
+    port: http-metrics
+    proxyUrl: ""
+    relabelings: []
+    sampleLimit: 0
+    selector: {}
+    serverName: null
+    targetLabels: []
+    targetLimit: 0
+kubeDns:
+  enabled: false
+  service:
+    dnsmasq:
+      port: 10054
+      targetPort: 10054
+    ipDualStack:
+      enabled: false
+      ipFamilies:
+      - IPv6
+      - IPv4
+      ipFamilyPolicy: PreferDualStack
+    skydns:
+      port: 10055
+      targetPort: 10055
+  serviceMonitor:
+    additionalLabels: {}
+    dnsmasqMetricRelabelings: []
+    dnsmasqRelabelings: []
+    interval: "10s"
+    jobLabel: jobLabel
+    labelLimit: 0
+    labelNameLengthLimit: 0
+    labelValueLengthLimit: 0
+    metricRelabelings: []
+    proxyUrl: ""
+    relabelings: []
+    sampleLimit: 0
+    selector: {}
+    targetLabels: []
+    targetLimit: 0
+kubeEtcd:
+  enabled: false
+  endpoints: []
+  service:
+    enabled: true
+    ipDualStack:
+      enabled: false
+      ipFamilies:
+      - IPv6
+      - IPv4
+      ipFamilyPolicy: PreferDualStack
+    port: 2381
+    targetPort: 2381
+  serviceMonitor:
+    additionalLabels: {}
+    caFile: ""
+    certFile: ""
+    enabled: true
+    insecureSkipVerify: false
+    interval: "10s"
+    jobLabel: jobLabel
+    keyFile: ""
+    labelLimit: 0
+    labelNameLengthLimit: 0
+    labelValueLengthLimit: 0
+    metricRelabelings: []
+    port: http-metrics
+    proxyUrl: ""
+    relabelings: []
+    sampleLimit: 0
+    scheme: http
+    selector: {}
+    serverName: ""
+    targetLabels: []
+    targetLimit: 0
+kubeProxy:
+  enabled: true
+  endpoints:
+    - 192.168.52.3
+    - 192.168.52.6
+  jobNameOverride: ""
+  service:
+    enabled: true
+    ipDualStack:
+      enabled: false
+      ipFamilies:
+      - IPv6
+      - IPv4
+      ipFamilyPolicy: PreferDualStack
+    port: 10249
+    targetPort: 10249
+  serviceMonitor:
+    additionalLabels: {}
+    enabled: true
+    https: false
+    interval: "10s"
+    jobLabel: jobLabel
+    labelLimit: 0
+    labelNameLengthLimit: 0
+    labelValueLengthLimit: 0
+    metricRelabelings:
+      - action: drop
+        regex: '.*_bucket$'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'grpc_client_.*|rest_client_.*|workqueue_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'registered_metrics_total|hidden_metrics_total|disabled_metrics_total'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'kubernetes_build_info|kubernetes_feature_enabled'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'go_cgo_.*|go_cpu_.*|go_gc_.*|go_memory_.*|go_memstats_.*|go_goroutines|go_sched_.*|go_threads|go_info|process_.*|go_godebug_.*|go_godebug_.*|go_sync_mutex_wait_total_seconds_total'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'k3s_.*|lasso_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'aggregator_.*|apiextensions_apiserver_validation_ratcheting_seconds_.*|apiserver_conversion_webhook_duration_seconds_.*|apiserver_conversion_webhook_request_total|apiextensions_openapi_v2_.*|apiextensions_openapi_v3_.*|apiserver_admission_controller_admission_duration_seconds_.*|apiserver_admission_match_condition_evaluation_seconds_.*|apiserver_admission_step_admission_duration_seconds_.*|apiserver_admission_step_admission_duration_seconds_summary|apiserver_admission_webhook_admission_duration_seconds_.*|apiserver_admission_webhook_request_total|field_validation_request_duration_seconds_.*|pod_security_evaluations_total|pod_security_exemptions_total|authenticated_user_requests|authentication_attempts|authentication_duration_seconds_.*|serviceaccount_invalid_legacy_auto_token_uses_total|serviceaccount_legacy_auto_token_uses_total|serviceaccount_legacy_manual_token_uses_total|serviceaccount_legacy_tokens_total|serviceaccount_valid_tokens_total|serviceaccount_stale_tokens_total|apiserver_authorization_decisions_total|authorization_attempts_total|authorization_duration_seconds_.*|apiserver_requested_deprecated_apis|apiserver_response_sizes_.*|apiserver_selfrequest_total|apiserver_current_inflight_requests|apiserver_current_inqueue_requests|apiserver_request_total|apiserver_delegated_authn_request_duration_seconds_.*|apiserver_delegated_authz_request_duration_seconds_.*|apiserver_delegated_authn_request_total|apiserver_delegated_authz_request_total|apiserver_request_body_size_bytes_.*|apiserver_request_filter_duration_seconds_.*|apiserver_request_timestamp_comparison_time_.*|apiserver_longrunning_requests|apiserver_request_aborts_total|apiserver_request_sli_duration_seconds_.*|apiserver_request_duration_seconds_.*|apiserver_flowcontrol_current_executing_requests|apiserver_flowcontrol_current_executing_seats|apiserver_flowcontrol_request_execution_seconds_.*|apiserver_flowcontrol_request_queue_length_after_enqueue_.*|apiserver_flowcontrol_current_inqueue_requests|apiserver_flowcontrol_current_inqueue_seats|apiserver_flowcontrol_request_wait_duration_seconds_.*|apiserver_flowcontrol_nominal_limit_seats|apiserver_flowcontrol_lower_limit_seats|apiserver_flowcontrol_upper_limit_seats|apiserver_flowcontrol_target_seats|apiserver_flowcontrol_target_seats|apiserver_flowcontrol_seat_fair_frac|apiserver_flowcontrol_dispatch_r|apiserver_flowcontrol_current_r|apiserver_flowcontrol_latest_s|apiserver_flowcontrol_next_s_bounds|apiserver_flowcontrol_next_discounted_s_bounds|apiserver_flowcontrol_current_limit_seats|apiserver_flowcontrol_demand_seats_(sum|count|average|stdev)|apiserver_flowcontrol_priority_level_request_utilization_.*|apiserver_flowcontrol_read_vs_write_current_requests_.*|apiserver_flowcontrol_demand_seats_high_watermark|apiserver_flowcontrol_demand_seats_smoothed|apiserver_flowcontrol_priority_level_seat_utilization_.*|apiserver_flowcontrol_work_estimated_seats_.*|apiserver_flowcontrol_watch_count_samples_.*|apiserver_flowcontrol_dispatched_requests_total|apiserver_flowcontrol_request_concurrency_in_use|apiserver_storage_data_key_generation_duration_seconds_.*|apiserver_storage_data_key_generation_failures_total|apiserver_storage_envelope_transformation_cache_misses_total|apiserver_storage_events_received_total|apiserver_storage_list_evaluated_objects_total|apiserver_storage_list_fetched_objects_total|apiserver_storage_list_returned_objects_total|apiserver_storage_objects|apiserver_storage_list_total|apiserver_storage_size_bytes|apiserver_watch_events_sizes_.*|watch_cache_capacity|watch_cache_capacity_increase_total|apiserver_watch_cache_resource_version|apiserver_watch_cache_events_received_total|apiserver_watch_cache_events_dispatched_total|apiserver_watch_cache_initializations_total|apiserver_watch_cache_read_wait_seconds_.*|apiserver_watch_cache_consistent_read_total|apiserver_watch_events_total|apiserver_cache_list_fetched_objects_total|apiserver_cache_list_total|apiserver_cache_list_returned_objects_total|apiserver_envelope_encryption_dek_cache_fill_percent|authentication_token_cache_fetch_total|authentication_token_cache_request_total|authentication_token_cache_active_fetch_count|authentication_token_cache_request_duration_seconds_.*|apiserver_audit_requests_rejected_total|apiserver_audit_event_total|cardinality_enforcement_unexpected_categorizations_total|apiserver_cel_compilation_duration_seconds_.*|apiserver_cel_evaluation_duration_seconds_.*|apiserver_client_certificate_expiration_seconds|apiserver_tls_handshake_errors_total|apiserver_kube_aggregator_x509_insecure_sha1_total|apiserver_kube_aggregator_x509_missing_san_total|apiserver_webhooks_x509_insecure_sha1_total|apiserver_webhooks_x509_missing_san_total|apiserver_clusterip_repair_reconcile_errors_total|apiserver_clusterip_repair_reconcile_errors_total|apiserver_egress_dialer_dial_start_total|apiserver_egress_dialer_dial_duration_seconds_.*|apiserver_init_events_total|kube_apiserver_nodeport_allocator_allocated_ports|kube_apiserver_nodeport_allocator_available_ports|kube_apiserver_pod_logs_backend_tls_failure_total|kube_apiserver_pod_logs_insecure_backend_total|endpoint_slice_controller_syncs|endpoint_slice_controller_num_endpoint_slices|endpoint_slice_controller_desired_endpoint_slices|endpoint_slice_controller_endpoints_desired|endnt_slice_controller_changes|endpoint_slice_controller_endpoints_added_per_sync_.*|endpoint_slice_controller_endpoints_removed_per_sync_.*|endpoint_slice_controller_endpointslices_changed_per_sync_.*|endpoint_slice_mirroring_controller_endpoints_desired|endpoint_slice_mirroring_controller_endpoints_added_per_sync_.*|endpoint_slice_mirroring_controller_endpoints_removed_per_sync_.*|endpoint_slice_mirroring_controller_endpoints_updated_per_sync_.*|endpoint_slice_mirroring_controller_addresses_skipped_per_sync_.*|endpoint_slice_mirroring_controller_num_endpoint_slices|endpoint_slice_mirroring_controller_desired_endpoint_slices|endpoint_slice_mirroring_controller_endpoints_sync_duration_.*|service_controller_loadbalancer_sync_total|service_controller_nodesync_error_total|service_controller_nodesync_latency_seconds_(sum|count)|service_controller_update_loadbalancer_host_latency_seconds_(sum|count)|node_authorizer_graph_actions_duration_seconds_.*|node_collector_zone_health|node_controller_cloud_provider_taint_removal_delay_seconds_.*|node_controller_initial_node_sync_delay_seconds_.*|node_collector_evictions_total|node_collector_unhealthy_nodes_in_zone|node_collector_zone_size|node_collector_update_node_health_duration_seconds_(sum|count)|node_collector_update_all_nodes_health_duration_seconds_(sum|count)|node_ipam_controller_cidrset_cidrs_allocations_total|node_ipam_controller_cidrset_usage_cidrs|node_ipam_controller_cirdset_max_cidrs|ephemeral_volume_controller_create_total|ephemeral_volume_controller_create_failures_total|retroactive_storageclass_total|retroactive_storageclass_errors_total|cronjob_controller_job_creation_skew_duration_seconds_.*|replicaset_controller_sorting_deletion_age_ratio_.*|taint_eviction_controller_pod_deletions_total|taint_eviction_controller_pod_deletion_duration_seconds_.*|ttl_after_finished_controller_job_deletion_duration_seconds_.*|garbagecollector_controller_resources_sync_error_total|root_ca_cert_publisher_sync_duration_seconds_.*|root_ca_cert_publisher_sync_total|running_managed_controllers|scheduler_plugin_evaluation_total|scheduler_event_handling_duration_seconds_.*|scheduler_pending_pods|scheduler_pod_scheduling_attempts_.*|scheduler_preemption_victims_.*|scheduler_scheduler_cache_size|scheduler_scheduling_algorithm_duration_seconds_.*|kubelet_http_inflight_requests|kubelet_http_requests_total|kubelet_http_requests_duration_seconds_.*|kubelet_lifecycle_handler_http_fallbacks_total|reconstruct_volume_operations_total|reconstruct_volume_operations_errors_total|force_cleaned_failed_volume_operations_total|force_cleaned_failed_volume_operation_errors_total|kubelet_orphan_pod_cleaned_volumes|kubelet_orphan_pod_cleaned_volumes_errors|kubelet_volume_metric_collection_duration_seconds_.*|storage_operation_duration_seconds_.*|volume_operation_total_seconds_.*|kubelet_desired_pods|kubelet_active_pods|kubelet_running_pods|kubelet_running_containers|kubelet_working_pods|kubelet_mirror_pods|kubelet_managed_ephemeral_containers|kubelet_cgroup_version|kubelet_cgroup_manager_duration_seconds_.*|kubelet_cpu_manager_pinning_requests_total|kubelet_cpu_manager_pinning_errors_total|kubelet_memory_manager_pinning_requests_total| kubelet_memory_manager_pinning_errors_total|kubelet_topology_manager_admission_requests_total|kubelet_topology_manager_admission_errors_total|kubelet_topology_manager_admission_duration_ms_.*|kubelet_runtime_operations_total|kubelet_runtime_operations_duration_seconds_.*|kubelet_docker_operations_total|kubelet_docker_operations_duration_seconds_.*|kubelet_network_plugin_operations_total|kubelet_network_plugin_operations_errors_total|kubelet_pleg_last_seen_seconds|kubelet_pleg_relist_interval_seconds_(sum|count)|kubelet_pleg_relist_duration_seconds_(sum|count)|kubelet_pleg_discard_events|kubelet_evented_pleg_connection_success_count|kubelet_evented_pleg_connection_error_count|kubelet_evented_pleg_connection_latency_seconds_(sum|count)|kubelet_pod_start_duration_seconds_(sum|count)|kubelet_pod_status_sync_duration_seconds_(sum|count)|kubelet_started_pods_total|kubelet_started_pods_errors_total|kubelet_first_network_pod_start_sli_duration_seconds|kubelet_node_name|kubelet_container_log_filesystem_used_bytes|kubelet_graceful_shutdown_start_time_seconds|kubelet_graceful_shutdown_end_time_seconds|kubelet_orphaned_runtime_pods_total|kubelet_restarted_pods_total|kubelet_sleep_action_terminated_early_total|kubeproxy_sync_proxy_rules_service_changes_total|kubeproxy_sync_proxy_rules_endpoint_changes_total|kubeproxy_sync_proxy_rules_iptables_last|kubeproxy_sync_proxy_rules_last_queued_timestamp_seconds|kube_router_build_info|kube_router_controller_iptables_v6_save_time_.*|kube_router_controller_iptables_v6_restore_time_.*|kube_router_controller_iptables_sync_time_(sum|count)|kube_router_controller_iptables_v4_restore_time_(sum|count)|kube_router_controller_policy_ipset_v6_restore_time_.*|kube_router_controller_policy_chains|kube_router_controller_policy_ipsets|kube_router_controller_policy_ipset_v4_restore_time_(sum|count)|kubelet_memory_manager_pinning_errors_total|kubelet_node_startup_duration_seconds|kubelet_node_startup_pre_kubelet_duration_seconds|kubelet_node_startup_registration_duration_seconds|kubelet_node_startup_pre_registration_duration_seconds|kubelet_node_startup_post_registration_duration_seconds|etcd_bookmark_counts|etcd_request_duration_seconds_.*|etcd_request_errors_total|etcd_lease_object_counts_.*|etcd_requests_total|scheduler_plugin_execution_duration_seconds_.*|scheduler_framework_extension_point_duration_seconds_.*|scheduler_goroutines|scheduler_scheduling_attempt_duration_seconds_.*|scheduler_schedule_attempts_total|scheduler_queue_incoming_pods_total|scheduler_pod_scheduling_sli_duration_seconds_.*|volume_manager_total_volumes|kubelet_volume_stats_capacity_bytes|kubelet_volume_stats_available_bytes|kube_persistentvolume_status_phase|kubelet_volume_stats_used_bytes|kubelet_volume_stats_inodes|kubelet_volume_stats_inodes_used|kubelet_volume_stats_inodes_free|replicaset_controller_sorting_deletion_age_ratio_.*|kubeproxy_iptables_localhost_nodeports_accepted_packets_total|kubeproxy_network_programming_duration_seconds_(sum|count)|kubeproxy_sync_proxy_rules_duration_seconds_(sum|count)|kubeproxy_sync_partial_proxy_rules_duration_seconds_(sum|count)|kubeproxy_sync_proxy_rules_service_changes_pending|kubeproxy_sync_proxy_rules_endpoint_changes_pending|kubeproxy_sync_proxy_rules_iptables_total|kubeproxy_sync_proxy_rules_iptables_restore_failures_total|kubeproxy_sync_proxy_rules_iptables_partial_restore_failures_total|kubeproxy_sync_proxy_rules_last_timestamp_seconds|kubeproxy_sync_proxy_rules_no_local_endpoints_total'
+        sourceLabels: [__name__]
+    port: http-metrics
+    proxyUrl: ""
+    relabelings: []
+    sampleLimit: 0
+    selector: {}
+    targetLabels: []
+    targetLimit: 0
+kubeScheduler:
+  enabled: true
+  endpoints:
+    - 192.168.52.3
+    - 192.168.52.6
+  jobNameOverride: ""
+  service:
+    enabled: true
+    ipDualStack:
+      enabled: false
+      ipFamilies:
+      - IPv6
+      - IPv4
+      ipFamilyPolicy: PreferDualStack
+    port: 10259
+    targetPort: 10259
+  serviceMonitor:
+    additionalLabels: {}
+    enabled: true
+    https: null
+    insecureSkipVerify: null
+    interval: "10s"
+    jobLabel: jobLabel
+    labelLimit: 0
+    labelNameLengthLimit: 0
+    labelValueLengthLimit: 0
+    metricRelabelings:
+      - action: drop
+        regex: '.*_bucket$'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'grpc_client_.*|rest_client_.*|workqueue_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'registered_metrics_total|hidden_metrics_total|disabled_metrics_total'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'kubernetes_build_info|kubernetes_feature_enabled'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'go_cgo_.*|go_cpu_.*|go_gc_.*|go_memory_.*|go_memstats_.*|go_goroutines|go_sched_.*|go_threads|go_info|process_.*|go_godebug_.*|go_sync_mutex_wait_total_seconds_total'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'k3s_.*|lasso_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'aggregator_.*|apiextensions_apiserver_validation_ratcheting_seconds_.*|apiserver_conversion_webhook_duration_seconds_.*|apiserver_conversion_webhook_request_total|apiextensions_openapi_v2_.*|apiextensions_openapi_v3_.*|apiserver_admission_controller_admission_duration_seconds_.*|apiserver_admission_match_condition_evaluation_seconds_.*|apiserver_admission_step_admission_duration_seconds_.*|apiserver_admission_step_admission_duration_seconds_summary|apiserver_admission_webhook_admission_duration_seconds_.*|apiserver_admission_webhook_request_total|field_validation_request_duration_seconds_.*|pod_security_evaluations_total|pod_security_exemptions_total|authenticated_user_requests|authentication_attempts|authentication_duration_seconds_.*|serviceaccount_invalid_legacy_auto_token_uses_total|serviceaccount_legacy_auto_token_uses_total|serviceaccount_legacy_manual_token_uses_total|serviceaccount_legacy_tokens_total|serviceaccount_valid_tokens_total|serviceaccount_stale_tokens_total|apiserver_authorization_decisions_total|authorization_attempts_total|authorization_duration_seconds_.*|apiserver_requested_deprecated_apis|apiserver_response_sizes_.*|apiserver_selfrequest_total|apiserver_current_inflight_requests|apiserver_current_inqueue_requests|apiserver_request_total|apiserver_delegated_authn_request_duration_seconds_.*|apiserver_delegated_authz_request_duration_seconds_.*|apiserver_delegated_authn_request_total|apiserver_delegated_authz_request_total|apiserver_request_body_size_bytes_.*|apiserver_request_filter_duration_seconds_.*|apiserver_request_timestamp_comparison_time_.*|apiserver_longrunning_requests|apiserver_request_aborts_total|apiserver_request_sli_duration_seconds_.*|apiserver_request_duration_seconds_.*|apiserver_flowcontrol_current_executing_requests|apiserver_flowcontrol_current_executing_seats|apiserver_flowcontrol_request_execution_seconds_.*|apiserver_flowcontrol_request_queue_length_after_enqueue_.*|apiserver_flowcontrol_current_inqueue_requests|apiserver_flowcontrol_current_inqueue_seats|apiserver_flowcontrol_request_wait_duration_seconds_.*|apiserver_flowcontrol_nominal_limit_seats|apiserver_flowcontrol_lower_limit_seats|apiserver_flowcontrol_upper_limit_seats|apiserver_flowcontrol_target_seats|apiserver_flowcontrol_target_seats|apiserver_flowcontrol_seat_fair_frac|apiserver_flowcontrol_dispatch_r|apiserver_flowcontrol_current_r|apiserver_flowcontrol_latest_s|apiserver_flowcontrol_next_s_bounds|apiserver_flowcontrol_next_discounted_s_bounds|apiserver_flowcontrol_current_limit_seats|apiserver_flowcontrol_demand_seats_(sum|count|average|stdev)|apiserver_flowcontrol_priority_level_request_utilization_.*|apiserver_flowcontrol_read_vs_write_current_requests_.*|apiserver_flowcontrol_demand_seats_high_watermark|apiserver_flowcontrol_demand_seats_smoothed|apiserver_flowcontrol_priority_level_seat_utilization_.*|apiserver_flowcontrol_work_estimated_seats_.*|apiserver_flowcontrol_watch_count_samples_.*|apiserver_flowcontrol_dispatched_requests_total|apiserver_flowcontrol_request_concurrency_in_use|apiserver_storage_data_key_generation_duration_seconds_.*|apiserver_storage_data_key_generation_failures_total|apiserver_storage_envelope_transformation_cache_misses_total|apiserver_storage_events_received_total|apiserver_storage_list_evaluated_objects_total|apiserver_storage_list_fetched_objects_total|apiserver_storage_list_returned_objects_total|apiserver_storage_objects|apiserver_storage_list_total|apiserver_storage_size_bytes|apiserver_watch_events_sizes_.*|watch_cache_capacity|watch_cache_capacity_increase_total|apiserver_watch_cache_resource_version|apiserver_watch_cache_events_received_total|apiserver_watch_cache_events_dispatched_total|apiserver_watch_cache_initializations_total|apiserver_watch_cache_read_wait_seconds_.*|apiserver_watch_cache_consistent_read_total|apiserver_watch_events_total|apiserver_cache_list_fetched_objects_total|apiserver_cache_list_total|apiserver_cache_list_returned_objects_total|apiserver_envelope_encryption_dek_cache_fill_percent|authentication_token_cache_fetch_total|authentication_token_cache_request_total|authentication_token_cache_active_fetch_count|authentication_token_cache_request_duration_seconds_.*|apiserver_audit_requests_rejected_total|apiserver_audit_event_total|cardinality_enforcement_unexpected_categorizations_total|apiserver_cel_compilation_duration_seconds_.*|apiserver_cel_evaluation_duration_seconds_.*|apiserver_client_certificate_expiration_seconds|apiserver_tls_handshake_errors_total|apiserver_kube_aggregator_x509_insecure_sha1_total|apiserver_kube_aggregator_x509_missing_san_total|apiserver_webhooks_x509_insecure_sha1_total|apiserver_webhooks_x509_missing_san_total|apiserver_clusterip_repair_reconcile_errors_total|apiserver_clusterip_repair_reconcile_errors_total|apiserver_egress_dialer_dial_start_total|apiserver_egress_dialer_dial_duration_seconds_.*|apiserver_init_events_total|kube_apiserver_nodeport_allocator_allocated_ports|kube_apiserver_nodeport_allocator_available_ports|kube_apiserver_pod_logs_backend_tls_failure_total|kube_apiserver_pod_logs_insecure_backend_total|endpoint_slice_controller_syncs|endpoint_slice_controller_num_endpoint_slices|endpoint_slice_controller_desired_endpoint_slices|endpoint_slice_controller_endpoints_desired|endnt_slice_controller_changes|endpoint_slice_controller_endpoints_added_per_sync_.*|endpoint_slice_controller_endpoints_removed_per_sync_.*|endpoint_slice_controller_endpointslices_changed_per_sync_.*|endpoint_slice_mirroring_controller_endpoints_desired|endpoint_slice_mirroring_controller_endpoints_added_per_sync_.*|endpoint_slice_mirroring_controller_endpoints_removed_per_sync_.*|endpoint_slice_mirroring_controller_endpoints_updated_per_sync_.*|endpoint_slice_mirroring_controller_addresses_skipped_per_sync_.*|endpoint_slice_mirroring_controller_num_endpoint_slices|endpoint_slice_mirroring_controller_desired_endpoint_slices|endpoint_slice_mirroring_controller_endpoints_sync_duration_.*|service_controller_loadbalancer_sync_total|service_controller_nodesync_error_total|service_controller_nodesync_latency_seconds_(sum|count)|service_controller_update_loadbalancer_host_latency_seconds_(sum|count)|node_authorizer_graph_actions_duration_seconds_.*|node_collector_zone_health|node_controller_cloud_provider_taint_removal_delay_seconds_.*|node_controller_initial_node_sync_delay_seconds_.*|node_collector_evictions_total|node_collector_unhealthy_nodes_in_zone|node_collector_zone_size|node_collector_update_node_health_duration_seconds_(sum|count)|node_collector_update_all_nodes_health_duration_seconds_(sum|count)|node_ipam_controller_cidrset_cidrs_allocations_total|node_ipam_controller_cidrset_usage_cidrs|node_ipam_controller_cirdset_max_cidrs|ephemeral_volume_controller_create_total|ephemeral_volume_controller_create_failures_total|retroactive_storageclass_total|retroactive_storageclass_errors_total|cronjob_controller_job_creation_skew_duration_seconds_.*|replicaset_controller_sorting_deletion_age_ratio_.*|taint_eviction_controller_pod_deletions_total|taint_eviction_controller_pod_deletion_duration_seconds_.*|ttl_after_finished_controller_job_deletion_duration_seconds_.*|garbagecollector_controller_resources_sync_error_total|root_ca_cert_publisher_sync_duration_seconds_.*|root_ca_cert_publisher_sync_total|running_managed_controllers|scheduler_plugin_evaluation_total|kubelet_http_inflight_requests|kubelet_http_requests_total|kubelet_http_requests_duration_seconds_.*|kubelet_lifecycle_handler_http_fallbacks_total|reconstruct_volume_operations_total|reconstruct_volume_operations_errors_total|force_cleaned_failed_volume_operations_total|force_cleaned_failed_volume_operation_errors_total|kubelet_orphan_pod_cleaned_volumes|kubelet_orphan_pod_cleaned_volumes_errors|kubelet_volume_metric_collection_duration_seconds_.*|storage_operation_duration_seconds_.*|volume_operation_total_seconds_.*|kubelet_desired_pods|kubelet_active_pods|kubelet_running_pods|kubelet_running_containers|kubelet_working_pods|kubelet_mirror_pods|kubelet_managed_ephemeral_containers|kubelet_cgroup_version|kubelet_cgroup_manager_duration_seconds_.*|kubelet_cpu_manager_pinning_requests_total|kubelet_cpu_manager_pinning_errors_total|kubelet_memory_manager_pinning_requests_total| kubelet_memory_manager_pinning_errors_total|kubelet_topology_manager_admission_requests_total|kubelet_topology_manager_admission_errors_total|kubelet_topology_manager_admission_duration_ms_.*|kubelet_runtime_operations_total|kubelet_runtime_operations_duration_seconds_.*|kubelet_docker_operations_total|kubelet_docker_operations_duration_seconds_.*|kubelet_network_plugin_operations_total|kubelet_network_plugin_operations_errors_total|kubelet_pleg_last_seen_seconds|kubelet_pleg_relist_interval_seconds_(sum|count)|kubelet_pleg_relist_duration_seconds_(sum|count)|kubelet_pleg_discard_events|kubelet_evented_pleg_connection_success_count|kubelet_evented_pleg_connection_error_count|kubelet_evented_pleg_connection_latency_seconds_(sum|count)|kubelet_pod_start_duration_seconds_(sum|count)|kubelet_pod_status_sync_duration_seconds_(sum|count)|kubelet_started_pods_total|kubelet_started_pods_errors_total|kubelet_first_network_pod_start_sli_duration_seconds|kubelet_node_name|kubelet_container_log_filesystem_used_bytes|kubelet_graceful_shutdown_start_time_seconds|kubelet_graceful_shutdown_end_time_seconds|kubelet_orphaned_runtime_pods_total|kubelet_restarted_pods_total|kubelet_sleep_action_terminated_early_total|kubeproxy_iptables_ct_state_invalid_dropped_packets_total|kubeproxy_iptables_localhost_nodeports_accepted_packets_total|kubeproxy_network_programming_duration_seconds_(sum|count)|kubeproxy_sync_proxy_rules_duration_seconds_(sum|count)|kubeproxy_sync_full_proxy_rules_duration_seconds_(sum|count)|kubeproxy_sync_partial_proxy_rules_duration_seconds_(sum|count)|kubeproxy_sync_proxy_rules_service_changes_total|kubeproxy_sync_proxy_rules_endpoint_changes_total|kubeproxy_sync_proxy_rules_iptables_last|kubeproxy_sync_proxy_rules_last_queued_timestamp_seconds|kubeproxy_sync_proxy_rules_service_changes_pending|kubeproxy_sync_proxy_rules_endpoint_changes_pending|kubeproxy_sync_proxy_rules_iptables_total|kubeproxy_sync_proxy_rules_iptables_restore_failures_total|kubeproxy_sync_proxy_rules_iptables_partial_restore_failures_total|kubeproxy_sync_proxy_rules_last_timestamp_seconds|kubeproxy_sync_proxy_rules_no_local_endpoints_total|kube_router_build_info|kube_router_controller_iptables_v6_save_time_.*|kube_router_controller_iptables_v6_restore_time_.*|kube_router_controller_iptables_sync_time_(sum|count)|kube_router_controller_iptables_v4_restore_time_(sum|count)|kube_router_controller_policy_ipset_v6_restore_time_.*|kube_router_controller_policy_chains|kube_router_controller_policy_ipsets|kube_router_controller_policy_ipset_v4_restore_time_(sum|count)|kubelet_memory_manager_pinning_errors_total|kubelet_node_startup_duration_seconds|kubelet_node_startup_pre_kubelet_duration_seconds|kubelet_node_startup_registration_duration_seconds|kubelet_node_startup_pre_registration_duration_seconds|kubelet_node_startup_post_registration_duration_seconds|etcd_bookmark_counts|etcd_request_duration_seconds_.*|etcd_request_errors_total|etcd_lease_object_counts_.*|etcd_requests_total|scheduler_plugin_execution_duration_seconds_.*|scheduler_framework_extension_point_duration_seconds_.*|scheduler_goroutines|scheduler_scheduling_attempt_duration_seconds_.*|scheduler_schedule_attempts_total|scheduler_queue_incoming_pods_total|scheduler_pod_scheduling_sli_duration_seconds_.*|volume_manager_total_volumes|kubelet_volume_stats_capacity_bytes|kubelet_volume_stats_available_bytes|kube_persistentvolume_status_phase|kubelet_volume_stats_used_bytes|kubelet_volume_stats_inodes|kubelet_volume_stats_inodes_used|kubelet_volume_stats_inodes_free|scheduler_event_handling_duration_seconds_.*|scheduler_preemption_victims_.*'
+        sourceLabels: [__name__]
+    port: http-metrics
+    proxyUrl: ""
+    relabelings: []
+    sampleLimit: 0
+    selector: {}
+    serverName: null
+    targetLabels: []
+    targetLimit: 0
+kubeStateMetrics:
+  enabled: true
+kubeTargetVersionOverride: ""
+kubeVersionOverride: ""
+kubelet:
+  enabled: true
+  jobNameOverride: ""
+  namespace: kube-system
+  serviceMonitor:
+    additionalLabels: {}
+    attachMetadata:
+      node: false
+    cAdvisor: true
+    cAdvisorInterval: "10s"
+    cAdvisorMetricRelabelings:
+    - action: drop
+      regex: container_cpu_(cfs_throttled_seconds_total|load_average_10s|system_seconds_total|user_seconds_total)
+      sourceLabels:
+      - __name__
+    - action: drop
+      regex: container_fs_inodes_free|container_fs_inodes_total|container_fs_io_current|container_fs_io_time_seconds_total|container_fs_io_time_weighted_seconds_total|container_fs_limit_bytes|container_fs_reads_merged_total|container_fs_sector_reads_total|container_fs_sector_writes_total|container_fs_usage_bytes|container_fs_writes_merged_total
+      sourceLabels:
+      - __name__
+    - action: drop
+      regex: container_memory_(mapped_file|swap)
+      sourceLabels:
+      - __name__
+    - action: drop
+      regex: container_(file_descriptors|tasks_state|threads_max)
+      sourceLabels:
+      - __name__
+    - action: drop
+      regex: container_memory_failures_total;hierarchy
+      sourceLabels:
+      - __name__
+      - scope
+    - action: drop
+      regex: container_network_.*;(cali|cilium|cni|lxc|nodelocaldns|tunl).*
+      sourceLabels:
+      - __name__
+      - interface
+    - action: drop
+      regex: container_spec.*
+      sourceLabels:
+      - __name__
+    - action: drop
+      regex: .+;
+      sourceLabels:
+      - id
+      - pod
+    - action: drop
+      regex: 'container_blkio_device_usage_total|container_memory_kernel_usage|container_memory_max_usage_bytes|container_memory_total_active_file_bytes|container_memory_total_inactive_file_bytes|container_memory_failcnt|container_memory_failures_total|container_sockets|container_start_time_seconds|container_last_seen|cadvisor_version_info|machine_.*'
+      sourceLabels:
+      - __name__
+    cAdvisorRelabelings:
+    - action: replace
+      sourceLabels:
+      - __metrics_path__
+      targetLabel: metrics_path
+    enabled: true
+    honorLabels: true
+    honorTimestamps: true
+    https: true
+    insecureSkipVerify: true
+    interval: "10s"
+    kubelet: true
+    labelLimit: 0
+    labelNameLengthLimit: 0
+    labelValueLengthLimit: 0
+    metricRelabelings:
+    - action: drop
+      regex: '.*_bucket$'
+      sourceLabels: [__name__]
+    - action: drop
+      regex: 'grpc_client_.*|rest_client_.*|workqueue_.*'
+      sourceLabels: [__name__]
+    - action: drop
+      regex: 'registered_metrics_total|hidden_metrics_total|disabled_metrics_total'
+      sourceLabels: [__name__]
+    - action: drop
+      regex: 'kubernetes_build_info|kubernetes_feature_enabled'
+      sourceLabels: [__name__]
+    - action: drop
+      regex: 'go_cgo_.*|go_cpu_.*|go_gc_.*|go_memory_.*|go_memstats_.*|go_goroutines|go_sched_.*|go_threads|go_info|process_.*|go_godebug_.*|go_sync_mutex_wait_total_seconds_total'
+      sourceLabels: [__name__]
+    - action: drop
+      regex: 'k3s_.*|lasso_.*'
+      sourceLabels: [__name__]
+    - action: drop
+      regex: 'aggregator_.*|apiextensions_apiserver_validation_ratcheting_seconds_.*|kubeproxy_iptables_ct_state_invalid_dropped_packets_total|apiserver_conversion_webhook_duration_seconds_.*|apiserver_conversion_webhook_request_total|apiextensions_openapi_v2_.*|apiextensions_openapi_v3_.*|apiserver_admission_controller_admission_duration_seconds_.*|apiserver_admission_match_condition_evaluation_seconds_.*|apiserver_admission_step_admission_duration_seconds_.*|apiserver_admission_step_admission_duration_seconds_summary|apiserver_admission_webhook_admission_duration_seconds_.*|apiserver_admission_webhook_request_total|field_validation_request_duration_seconds_.*|pod_security_evaluations_total|pod_security_exemptions_total|authenticated_user_requests|authentication_attempts|authentication_duration_seconds_.*|serviceaccount_invalid_legacy_auto_token_uses_total|serviceaccount_legacy_auto_token_uses_total|serviceaccount_legacy_manual_token_uses_total|serviceaccount_legacy_tokens_total|serviceaccount_valid_tokens_total|serviceaccount_stale_tokens_total|apiserver_authorization_decisions_total|authorization_attempts_total|authorization_duration_seconds_.*|apiserver_requested_deprecated_apis|apiserver_response_sizes_.*|apiserver_selfrequest_total|apiserver_current_inflight_requests|apiserver_current_inqueue_requests|apiserver_request_total|apiserver_delegated_authn_request_duration_seconds_.*|apiserver_delegated_authz_request_duration_seconds_.*|apiserver_delegated_authn_request_total|apiserver_delegated_authz_request_total|apiserver_request_body_size_bytes_.*|apiserver_request_filter_duration_seconds_.*|apiserver_request_timestamp_comparison_time_.*|apiserver_longrunning_requests|apiserver_request_aborts_total|apiserver_request_sli_duration_seconds_.*|apiserver_request_duration_seconds_.*|apiserver_flowcontrol_current_executing_requests|apiserver_flowcontrol_current_executing_seats|apiserver_flowcontrol_request_execution_seconds_.*|apiserver_flowcontrol_request_queue_length_after_enqueue_.*|apiserver_flowcontrol_current_inqueue_requests|apiserver_flowcontrol_current_inqueue_seats|apiserver_flowcontrol_request_wait_duration_seconds_.*|apiserver_flowcontrol_nominal_limit_seats|apiserver_flowcontrol_lower_limit_seats|apiserver_flowcontrol_upper_limit_seats|apiserver_flowcontrol_target_seats|apiserver_flowcontrol_target_seats|apiserver_flowcontrol_seat_fair_frac|apiserver_flowcontrol_dispatch_r|apiserver_flowcontrol_current_r|apiserver_flowcontrol_latest_s|apiserver_flowcontrol_next_s_bounds|apiserver_flowcontrol_next_discounted_s_bounds|apiserver_flowcontrol_current_limit_seats|apiserver_flowcontrol_demand_seats_(sum|count|average|stdev)|apiserver_flowcontrol_priority_level_request_utilization_.*|apiserver_flowcontrol_read_vs_write_current_requests_.*|apiserver_flowcontrol_demand_seats_high_watermark|apiserver_flowcontrol_demand_seats_smoothed|apiserver_flowcontrol_priority_level_seat_utilization_.*|apiserver_flowcontrol_work_estimated_seats_.*|apiserver_flowcontrol_watch_count_samples_.*|apiserver_flowcontrol_dispatched_requests_total|apiserver_flowcontrol_request_concurrency_in_use|apiserver_storage_data_key_generation_duration_seconds_.*|apiserver_storage_data_key_generation_failures_total|apiserver_storage_envelope_transformation_cache_misses_total|apiserver_storage_events_received_total|apiserver_storage_list_evaluated_objects_total|apiserver_storage_list_fetched_objects_total|apiserver_storage_list_returned_objects_total|apiserver_storage_objects|apiserver_storage_list_total|apiserver_storage_size_bytes|apiserver_watch_events_sizes_.*|watch_cache_capacity|watch_cache_capacity_increase_total|apiserver_watch_cache_resource_version|apiserver_watch_cache_events_received_total|apiserver_watch_cache_events_dispatched_total|apiserver_watch_cache_initializations_total|apiserver_watch_cache_read_wait_seconds_.*|apiserver_watch_cache_consistent_read_total|apiserver_watch_events_total|apiserver_cache_list_fetched_objects_total|apiserver_cache_list_total|apiserver_cache_list_returned_objects_total|apiserver_envelope_encryption_dek_cache_fill_percent|authentication_token_cache_fetch_total|authentication_token_cache_request_total|authentication_token_cache_active_fetch_count|authentication_token_cache_request_duration_seconds_.*|apiserver_audit_requests_rejected_total|apiserver_audit_event_total|cardinality_enforcement_unexpected_categorizations_total|apiserver_cel_compilation_duration_seconds_.*|apiserver_cel_evaluation_duration_seconds_.*|apiserver_client_certificate_expiration_seconds|apiserver_tls_handshake_errors_total|apiserver_kube_aggregator_x509_insecure_sha1_total|apiserver_kube_aggregator_x509_missing_san_total|apiserver_webhooks_x509_insecure_sha1_total|apiserver_webhooks_x509_missing_san_total|apiserver_clusterip_repair_reconcile_errors_total|apiserver_clusterip_repair_reconcile_errors_total|apiserver_egress_dialer_dial_start_total|apiserver_egress_dialer_dial_duration_seconds_.*|apiserver_init_events_total|kube_apiserver_nodeport_allocator_allocated_ports|kube_apiserver_nodeport_allocator_available_ports|kube_apiserver_pod_logs_backend_tls_failure_total|kube_apiserver_pod_logs_insecure_backend_total|endpoint_slice_controller_syncs|endpoint_slice_controller_num_endpoint_slices|endpoint_slice_controller_desired_endpoint_slices|endpoint_slice_controller_endpoints_desired|endnt_slice_controller_changes|endpoint_slice_controller_endpoints_added_per_sync_.*|endpoint_slice_controller_endpoints_removed_per_sync_.*|endpoint_slice_controller_endpointslices_changed_per_sync_.*|endpoint_slice_mirroring_controller_endpoints_desired|endpoint_slice_mirroring_controller_endpoints_added_per_sync_.*|endpoint_slice_mirroring_controller_endpoints_removed_per_sync_.*|endpoint_slice_mirroring_controller_endpoints_updated_per_sync_.*|endpoint_slice_mirroring_controller_addresses_skipped_per_sync_.*|endpoint_slice_mirroring_controller_num_endpoint_slices|endpoint_slice_mirroring_controller_desired_endpoint_slices|endpoint_slice_mirroring_controller_endpoints_sync_duration_.*|service_controller_loadbalancer_sync_total|service_controller_nodesync_error_total|service_controller_nodesync_latency_seconds_(sum|count)|service_controller_update_loadbalancer_host_latency_seconds_(sum|count)|node_authorizer_graph_actions_duration_seconds_.*|node_collector_zone_health|node_controller_cloud_provider_taint_removal_delay_seconds_.*|node_controller_initial_node_sync_delay_seconds_.*|node_collector_evictions_total|node_collector_unhealthy_nodes_in_zone|node_collector_update_node_health_duration_seconds_(sum|count)|node_collector_update_all_nodes_health_duration_seconds_(sum|count)|node_ipam_controller_cidrset_cidrs_allocations_total|node_ipam_controller_cidrset_usage_cidrs|node_ipam_controller_cirdset_max_cidrs|ephemeral_volume_controller_create_total|ephemeral_volume_controller_create_failures_total|retroactive_storageclass_total|retroactive_storageclass_errors_total|cronjob_controller_job_creation_skew_duration_seconds_.*|replicaset_controller_sorting_deletion_age_ratio_.*|taint_eviction_controller_pod_deletions_total|taint_eviction_controller_pod_deletion_duration_seconds_.*|ttl_after_finished_controller_job_deletion_duration_seconds_.*|garbagecollector_controller_resources_sync_error_total|root_ca_cert_publisher_sync_duration_seconds_.*|root_ca_cert_publisher_sync_total|running_managed_controllers|scheduler_plugin_evaluation_total|scheduler_event_handling_duration_seconds_.*|scheduler_pending_pods|scheduler_pod_scheduling_attempts_.*|scheduler_preemption_victims_.*|scheduler_scheduler_cache_size|scheduler_scheduling_algorithm_duration_seconds_.*|kubelet_cgroup_version|kubelet_runtime_operations_total|kubelet_runtime_operations_duration_seconds_.*|kubelet_node_name|kubelet_container_log_filesystem_used_bytes|kubelet_graceful_shutdown_start_time_seconds|kubelet_graceful_shutdown_end_time_seconds|kubeproxy_iptables_localhost_nodeports_accepted_packets_total|kubeproxy_network_programming_duration_seconds_(sum|count)|kubeproxy_sync_proxy_rules_duration_seconds_(sum|count)|kubeproxy_sync_full_proxy_rules_duration_seconds_(sum|count)|kubeproxy_sync_partial_proxy_rules_duration_seconds_(sum|count)|kubeproxy_sync_proxy_rules_service_changes_total|kubeproxy_sync_proxy_rules_endpoint_changes_total|kubeproxy_sync_proxy_rules_iptables_last|kubeproxy_sync_proxy_rules_last_queued_timestamp_seconds|kubeproxy_sync_proxy_rules_service_changes_pending|kubeproxy_sync_proxy_rules_endpoint_changes_pending|kubeproxy_sync_proxy_rules_iptables_total|kubeproxy_sync_proxy_rules_iptables_restore_failures_total|kubeproxy_sync_proxy_rules_iptables_partial_restore_failures_total|kubeproxy_sync_proxy_rules_last_timestamp_seconds|kubeproxy_sync_proxy_rules_no_local_endpoints_total|kube_router_build_info|kube_router_controller_iptables_v6_save_time_.*|kube_router_controller_iptables_v6_restore_time_.*|kube_router_controller_policy_ipset_v6_restore_time_.*|kubelet_node_startup_duration_seconds|kubelet_node_startup_pre_kubelet_duration_seconds|kubelet_node_startup_registration_duration_seconds|kubelet_node_startup_pre_registration_duration_seconds|kubelet_node_startup_post_registration_duration_seconds|etcd_bookmark_counts|etcd_request_duration_seconds_.*|etcd_request_errors_total|etcd_lease_object_counts_.*|etcd_requests_total|scheduler_plugin_execution_duration_seconds_.*|scheduler_framework_extension_point_duration_seconds_.*|scheduler_goroutines|scheduler_scheduling_attempt_duration_seconds_.*|scheduler_schedule_attempts_total|scheduler_queue_incoming_pods_total|scheduler_pod_scheduling_sli_duration_seconds_.*|volume_manager_total_volumes|volume_operation_total_seconds_.*|kubelet_volume_stats_used_bytes|kubelet_volume_stats_inodes|kubelet_volume_stats_inodes_used|kubelet_volume_stats_inodes_free|kubelet_lifecycle_handler_http_fallbacks_total|kubelet_http_requests_duration_seconds_.*|reconstruct_volume_operations_total|reconstruct_volume_operations_errors_total|force_cleaned_failed_volume_operations_total|force_cleaned_failed_volume_operation_errors_total|kubelet_orphan_pod_cleaned_volumes|kubelet_orphan_pod_cleaned_volumes_errors|kubelet_volume_metric_collection_duration_seconds_.*|kubelet_mirror_pods|kubelet_cgroup_manager_duration_seconds_.*|kubelet_topology_manager_admission_duration_ms_.*|kubelet_pleg_last_seen_seconds|kubelet_pleg_relist_interval_seconds_(sum|count)|kubelet_pleg_relist_duration_seconds_(sum|count)|kubelet_pleg_discard_events|kubelet_evented_pleg_connection_success_count|kubelet_evented_pleg_connection_error_count|kubelet_evented_pleg_connection_latency_seconds_(sum|count)|kubelet_orphaned_runtime_pods_total|kubelet_restarted_pods_total|kubelet_sleep_action_terminated_early_total|kube_router_controller_policy_chains|kube_router_controller_policy_ipsets|kube_router_controller_policy_ipset_v4_restore_time_(sum|count)|kube_router_controller_iptables_sync_time_(sum|count)|kube_router_controller_iptables_v4_restore_time_(sum|count)'
+      sourceLabels: [__name__]
+    - action: drop
+      regex: (csi_operations|storage_operation_duration)_seconds_bucket;(0.25|2.5|15|25|120|600)(\.0)?
+      sourceLabels:
+      - __name__
+      - le 
+    probes: true
+    probesMetricRelabelings:
+      - action: drop
+        regex: 'prober_.*'
+        sourceLabels: [__name__]
+    probesRelabelings:
+    - action: replace
+      sourceLabels:
+      - __metrics_path__
+      targetLabel: metrics_path
+    proxyUrl: ""
+    relabelings:
+    - action: replace
+      sourceLabels:
+      - __metrics_path__
+      targetLabel: metrics_path
+    resource: false
+    resourceInterval: 10s
+    resourcePath: /metrics/resource/v1alpha1
+    resourceRelabelings:
+    - action: replace
+      sourceLabels:
+      - __metrics_path__
+      targetLabel: metrics_path
+    sampleLimit: 0
+    targetLabels: []
+    targetLimit: 0
+    trackTimestampsStaleness: true
+kubernetesServiceMonitors:
+  enabled: true
+nameOverride: ""
+namespaceOverride: ""
+nodeExporter:
+  enabled: true
+  forceDeployDashboards: false
+  operatingSystems:
+    aix:
+      enabled: true
+    darwin:
+      enabled: true
+    linux:
+      enabled: true
+prometheus:
+  additionalLabels: {}
+  additionalPodMonitors: []
+  additionalRulesForClusterRole: []
+  additionalServiceMonitors: []
+  agentMode: true
+  annotations: {}
+  enabled: true
+  extraSecret:
+    annotations: {}
+    data: {}
+  ingress:
+    annotations:
+      cert-manager.io/cluster-issuer: producer-ca-issuer
+    enabled: true
+    hosts:
+      - producer.prometheus.example.com
+    ingressClassName: "traefik"
+    labels: {}
+    paths:
+      - /
+    tls:
+      - secretName: prometheus-general-tls
+        hosts:
+          - producer.prometheus.example.com
+  ingressPerReplica:
+    annotations: {}
+    enabled: false
+    hostDomain: ""
+    hostPrefix: ""
+    ingressClassName: ""
+    labels: {}
+    paths: []
+    tlsSecretName: ""
+    tlsSecretPerReplica:
+      enabled: false
+      prefix: prometheus
+  networkPolicy:
+    enabled: false
+    flavor: kubernetes
+    namespace: null
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    unhealthyPodEvictionPolicy: AlwaysAllow
+  prometheusSpec:
+    additionalAlertManagerConfigs: []
+    additionalAlertManagerConfigsSecret: {}
+    additionalAlertRelabelConfigs: []
+    additionalAlertRelabelConfigsSecret: {}
+    additionalArgs: []
+    additionalConfig: {}
+    additionalConfigString: ""
+    additionalPrometheusSecretsAnnotations: {}
+    additionalRemoteRead: []
+    additionalRemoteWrite: []
+    additionalScrapeConfigs: []
+    additionalScrapeConfigsSecret: {}
+    affinity: {}
+    alertingEndpoints: []
+    allowOverlappingBlocks: false
+    apiserverConfig: {}
+    arbitraryFSAccessThroughSMs: false
+    automountServiceAccountToken: true
+    configMaps: []
+    containers: []
+    disableCompaction: false
+    dnsConfig: {}
+    dnsPolicy: ""
+    enableAdminAPI: false
+    enableFeatures: []
+    enableOTLPReceiver: false
+    enableRemoteWriteReceiver: false
+    enforcedKeepDroppedTargets: 0
+    enforcedLabelLimit: false
+    enforcedLabelNameLengthLimit: false
+    enforcedLabelValueLengthLimit: false
+    enforcedNamespaceLabel: ""
+    enforcedSampleLimit: false
+    enforcedTargetLimit: false
+    evaluationInterval: "10s"
+    excludedFromEnforcement: []
+    exemplars: {}
+    externalLabels:
+      cluster: "producer"
+    externalUrl: "https://producer.prometheus.example.com"
+    hostAliases: []
+    hostNetwork: false
+    ignoreNamespaceSelectors: false
+    image:
+      pullPolicy: IfNotPresent
+      registry: quay.io
+      repository: prometheus/prometheus
+      sha: ""
+      tag: v3.8.1
+    initContainers: []
+    listenLocal: false
+    logFormat: logfmt
+    logLevel: info
+    maximumStartupDurationSeconds: 0
+    minReadySeconds: 0
+    nameValidationScheme: ""
+    nodeSelector:
+      node-role: master
+    otlp: {}
+    overrideHonorLabels: false
+    overrideHonorTimestamps: true
+    paused: false
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
+    podAntiAffinity: soft
+    podAntiAffinityTopologyKey: kubernetes.io/hostname
+    podMetadata: {}
+    podMonitorNamespaceSelector: {}
+    podMonitorSelector: {}
+    podMonitorSelectorNilUsesHelmValues: true
+    podTargetLabels: []
+    portName: http-web
+    priorityClassName: ""
+    probeNamespaceSelector: {}
+    probeSelector: {}
+    probeSelectorNilUsesHelmValues: true
+    prometheusExternalLabelName: ""
+    prometheusExternalLabelNameClear: false
+    prometheusRulesExcludedFromEnforce: []
+    query: {}
+    queryLogFile: false
+    remoteRead: []
+    remoteWrite: 
+      - url: "https://prometheus.example.com/api/v1/write"
+        tlsConfig:
+          insecureSkipVerify: false
+          serverName: "prometheus.example.com"
+          ca:
+            secret:
+              name: monitor-ca-secret
+              key: ca.crt
+    remoteWriteDashboards: false
+    replicaExternalLabelName: ""
+    replicaExternalLabelNameClear: false
+    replicas: 2
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2
+        memory: 2Gi
+    retention: 10d
+    retentionSize: "10GiB"
+    routePrefix: /
+    ruleNamespaceSelector: {}
+    ruleSelector: {}
+    ruleSelectorNilUsesHelmValues: true
+    sampleLimit: false
+    scrapeClasses:
+      - name: cluster-label
+        default: true
+        relabelings:
+          - targetLabel: cluster
+            replacement: producer
+    scrapeConfigNamespaceSelector: {}
+    scrapeConfigSelector: {}
+    scrapeConfigSelectorNilUsesHelmValues: true
+    scrapeFailureLogFile: ""
+    scrapeInterval: "10s"
+    scrapeProtocols: []
+    scrapeTimeout: "5s"
+    secrets: []
+    securityContext:
+      fsGroup: 2000
+      runAsGroup: 2000
+      runAsNonRoot: true
+      runAsUser: 1000
+      seccompProfile:
+        type: RuntimeDefault
+    serviceDiscoveryRole: ""
+    serviceMonitorNamespaceSelector: {}
+    serviceMonitorSelector: {}
+    serviceMonitorSelectorNilUsesHelmValues: true
+    serviceName: null
+    shards: 1
+    storageSpec:
+      volumeClaimTemplate:
+        metadata:
+          name: prometheus-pv
+        spec:
+          storageClassName: nfs-client-storageclass
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+    thanos: {}
+    tolerations: []
+    topologySpreadConstraints: []
+    tracingConfig: {}
+    tsdb:
+      outOfOrderTimeWindow: 0s
+    version: ""
+    volumeMounts: []
+    volumes: []
+    walCompression: true
+    web: {}
+  route:
+    main:
+      additionalRules: []
+      annotations: {}
+      apiVersion: gateway.networking.k8s.io/v1
+      enabled: false
+      filters: []
+      hostnames: []
+      httpsRedirect: false
+      kind: HTTPRoute
+      labels: {}
+      matches:
+      - path:
+          type: PathPrefix
+          value: /
+      parentRefs: []
+  service:
+    additionalPorts: []
+    annotations: {}
+    clusterIP: ""
+    enabled: true
+    externalIPs: []
+    externalTrafficPolicy: Cluster
+    ipDualStack:
+      enabled: false
+      ipFamilies:
+      - IPv6
+      - IPv4
+      ipFamilyPolicy: PreferDualStack
+    labels: {}
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    nodePort: 30090
+    port: 9090
+    publishNotReadyAddresses: false
+    reloaderWebPort: 8080
+    sessionAffinity: None
+    sessionAffinityConfig:
+      clientIP:
+        timeoutSeconds: 10800
+    targetPort: 9090
+    type: ClusterIP
+  serviceAccount:
+    annotations: {}
+    automountServiceAccountToken: true
+    create: true
+    name: ""
+  serviceMonitor:
+    additionalEndpoints: []
+    additionalLabels: {}
+    bearerTokenFile: null
+    interval: "10s"
+    labelLimit: 0
+    labelNameLengthLimit: 0
+    labelValueLengthLimit: 0
+    metricRelabelings:
+      - action: drop
+        regex: '.*_bucket$'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'go_gc_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'go_memstats_.*|go_memory_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'go_goroutines|go_info|go_threads'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'go_sched_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'go_sync_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'process_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'net_conntrack_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'promhttp_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_api_notification_active_subscribers|prometheus_api_notification_updates_dropped_total|prometheus_api_notification_updates_sent_total'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_notifications_dropped_total|prometheus_notifications_latency_seconds'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_build_info|prometheus_config_last_reload_success_timestamp_seconds'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_http_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_template_text_expansion_failures_total|prometheus_template_text_expansions_total|prometheus_treecache_watcher_goroutines|prometheus_treecache_zookeeper_failures_total'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_engine_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_remote_storage_exemplars_in_total|prometheus_remote_storage_highest_timestamp_in_seconds|prometheus_remote_storage_histograms_in_total|prometheus_remote_storage_string_interner_zero_reference_releases_total'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_rule_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_sd_(azure_.*|consul_.*|dns_.*|file_.*|http_failures_total|kubernetes_http_request_.*|kubernetes_workqueue_.*|kuma_.*|linode_failures_total|received_updates_total|updates_total)'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_tsdb_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_target_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_web_federation_errors_total|prometheus_web_federation_warnings_total'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'scrape_samples_scraped|scrape_samples_post_metric_relabeling|scrape_series_added'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'reloader_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_remote_storage_histograms_.*|prometheus_remote_storage_exemplars_.*|prometheus_remote_storage_max_samples_per_send|prometheus_remote_storage_shards_desired|prometheus_remote_storage_shards_min|prometheus_remote_storage_shards_max|prometheus_remote_storage_shards|prometheus_remote_storage_shards|prometheus_remote_storage_shard_capacity|prometheus_remote_storage_sent_batch_duration_seconds|prometheus_remote_storage_highest_timestamp_in_seconds|prometheus_remote_storage_samples_pending|prometheus_remote_storage_enqueue_retries_total|prometheus_remote_read_handler_queries|prometheus_remote_storage_bytes_total|prometheus_remote_storage_metadata_bytes_total|prometheus_remote_storage_metadata_total'
+        sourceLabels: [__name__]
+    relabelings: []
+    sampleLimit: 0
+    scheme: ""
+    selfMonitor: true
+    targetLimit: 0
+    tlsConfig: {}
+  servicePerReplica:
+    annotations: {}
+    enabled: false
+    externalTrafficPolicy: Cluster
+    ipDualStack:
+      enabled: false
+      ipFamilies:
+      - IPv6
+      - IPv4
+      ipFamilyPolicy: PreferDualStack
+    loadBalancerSourceRanges: []
+    nodePort: 30091
+    port: 9090
+    targetPort: 9090
+    type: ClusterIP
+  thanosIngress:
+    annotations: {}
+    enabled: false
+    hosts: []
+    ingressClassName: ""
+    labels: {}
+    nodePort: 30901
+    paths: []
+    servicePort: 10901
+    tls: []
+  thanosService:
+    annotations: {}
+    clusterIP: None
+    enabled: false
+    externalTrafficPolicy: Cluster
+    httpNodePort: 30902
+    httpPort: 10902
+    httpPortName: http
+    ipDualStack:
+      enabled: false
+      ipFamilies:
+      - IPv6
+      - IPv4
+      ipFamilyPolicy: PreferDualStack
+    labels: {}
+    nodePort: 30901
+    port: 10901
+    portName: grpc
+    targetHttpPort: http
+    targetPort: grpc
+    type: ClusterIP
+  thanosServiceExternal:
+    annotations: {}
+    enabled: false
+    externalTrafficPolicy: Cluster
+    httpNodePort: 30902
+    httpPort: 10902
+    httpPortName: http
+    labels: {}
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    nodePort: 30901
+    port: 10901
+    portName: grpc
+    targetHttpPort: http
+    targetPort: grpc
+    type: LoadBalancer
+  thanosServiceMonitor:
+    additionalLabels: {}
+    bearerTokenFile: null
+    enabled: false
+    interval: "10s"
+    metricRelabelings: []
+    relabelings: []
+    scheme: ""
+    tlsConfig: {}
+prometheus-node-exporter:
+  affinity: {}
+  commonLabels: {}
+  configmaps: []
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+  daemonsetAnnotations: {}
+  dnsConfig: {}
+  endpoints: []
+  env: {}
+  extraArgs:
+  - --collector.filesystem.mount-points-exclude=^/(.+)
+  - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$
+  - --no-collector.arp
+  - --no-collector.bcache
+  - --no-collector.bonding
+  - --no-collector.btrfs
+  - --no-collector.conntrack
+  - --no-collector.dmi
+  - --no-collector.edac
+  - --no-collector.entropy
+  - --no-collector.fibrechannel
+  - --no-collector.hwmon
+  - --no-collector.infiniband
+  - --no-collector.ipvs
+  - --no-collector.mdadm
+  - --no-collector.nvme
+  - --no-collector.rapl
+  - --no-collector.selinux
+  - --no-collector.tapestats
+  - --no-collector.textfile
+  - --no-collector.thermal_zone
+  - --no-collector.udp_queues
+  - --no-collector.uname
+  - --no-collector.xfs
+  - --no-collector.zfs
+  - --no-collector.sockstat
+  - --no-collector.powersupplyclass
+  - --no-collector.os
+  - --no-collector.nfsd
+  - --no-collector.nfs
+  - --collector.netdev.device-include=^(ens33)$
+  - --collector.diskstats.device-exclude=^(dm-\d+|md\d+|z?ram\d+|loop\d+|fd\d+|sr\d+|sd[a-z]+\d+)$
+  - --no-collector.netclass
+  - --no-collector.cpufreq
+  extraHostVolumeMounts: []
+  extraInitContainers: []
+  extraManifests: []
+  extraVolumeMounts: []
+  extraVolumes: []
+  fullnameOverride: ""
+  global:
+    imagePullSecrets: []
+    imageRegistry: ""
+    rbac:
+      create: true
+      createAggregateClusterRoles: false
+  hostIPC: false
+  hostNetwork: true
+  hostPID: true
+  hostProcFsMount:
+    mountPropagation: ""
+  hostRootFsMount:
+    enabled: true
+    mountPropagation: HostToContainer
+  hostSysFsMount:
+    mountPropagation: ""
+  image:
+    digest: ""
+    pullPolicy: IfNotPresent
+    registry: quay.io
+    repository: prometheus/node-exporter
+    tag: ""
+  imagePullSecrets: []
+  kubeRBACProxy:
+    containerSecurityContext: {}
+    enableHostPort: false
+    enableProxyEndpointsHostPort: false
+    enabled: false
+    env: {}
+    extraArgs: []
+    extraVolumeMounts: []
+    image:
+      pullPolicy: IfNotPresent
+      registry: quay.io
+      repository: brancz/kube-rbac-proxy
+      sha: ""
+      tag: v0.20.1
+    port: 8100
+    portName: http
+    proxyEndpointsPort: 8888
+    resources: {}
+    tls:
+      enabled: false
+      tlsClientAuth: false
+  livenessProbe:
+    failureThreshold: 3
+    httpGet:
+      httpHeaders: []
+      scheme: http
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 1
+  nameOverride: ""
+  namespaceOverride: ""
+  networkPolicy:
+    enabled: false
+  nodeSelector:
+    kubernetes.io/os: linux
+  podAnnotations:
+    cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
+  podLabels:
+    jobLabel: node-exporter
+  prometheus:
+    monitor:
+      additionalLabels: {}
+      apiVersion: ""
+      attachMetadata:
+        node: false
+      basicAuth: {}
+      bearerTokenFile: null
+      enabled: true
+      interval: "10s"
+      jobLabel: jobLabel
+      labelLimit: 0
+      labelNameLengthLimit: 0
+      labelValueLengthLimit: 0
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: "go_.*|process_.*|promhttp_.*|node_scrape_collector_.*|node_time_.*|node_timex_.*|node_vmstat_.*|node_boot_time_seconds|node_forks_total|node_intr_total|node_procs_running|node_softnet_.*|node_schedstat_.*|node_pressure_.*|node_netstat_.*|node_network_receive_.*|node_network_transmit_.*|node_memory_.*|node_filesystem_.*|node_disk_.*|node_cpu_.*" 
+          targetLabel: "drop_node_exporter_metric"
+          replacement: "1"
+          action: replace
+        - sourceLabels: [__name__]
+          regex: "go_gc_duration_seconds_sum|go_gc_duration_seconds_count|go_memstats_heap_inuse_bytes|go_memstats_heap_sys_bytes|go_memstats_alloc_bytes_total|go_goroutines|go_threads|process_cpu_seconds_total|process_resident_memory_bytes|node_time_seconds|node_time_zone_offset_seconds|node_timex_offset_seconds|node_timex_sync_status|node_vmstat_pgfault|node_vmstat_pgmajfault|node_softnet_dropped_total|node_softnet_times_squeezed_total|node_softnet_backlog_len|node_softnet_processed_total|node_schedstat_running_seconds_total|node_schedstat_waiting_seconds_total|node_pressure_cpu_waiting_seconds_total|node_pressure_io_waiting_seconds_total|node_pressure_memory_waiting_seconds_total|node_netstat_Tcp_CurrEstab|node_netstat_Tcp_RetransSegs|node_netstat_TcpExt_TCPTimeouts|node_netstat_TcpExt_ListenDrops|node_netstat_Udp_InErrors|node_netstat_Udp_RcvbufErrors|node_network_receive_bytes_total|node_network_receive_packets_total|node_network_receive_drop_total|node_network_receive_errs_total|node_network_transmit_bytes_total|node_network_transmit_packets_total|node_network_transmit_drop_total|node_network_transmit_errs_total|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_memory_Buffers_bytes|node_memory_Cached_bytes|node_memory_Active_anon_bytes|node_memory_Inactive_anon_bytes|node_memory_Dirty_bytes|node_memory_Writeback_bytes|node_memory_AnonPages_bytes|node_memory_PageTables_bytes|node_memory_KernelStack_bytes|node_memory_SReclaimable_bytes|node_memory_Shmem_bytes|node_memory_Unevictable_bytes|node_memory_SUnreclaim_bytes|node_memory_Mlocked_bytes|node_memory_CommitLimit_bytes|node_memory_Committed_AS_bytes|node_filesystem_size_bytes|node_filesystem_avail_bytes|node_filesystem_files|node_filesystem_files_free|node_filesystem_readonly|node_filesystem_device_error|node_disk_io_time_seconds_total|node_disk_io_time_weighted_seconds_total|node_disk_read_bytes_total|node_disk_written_bytes_total|node_disk_reads_completed_total|node_disk_writes_completed_total|node_disk_read_time_seconds_total|node_disk_write_time_seconds_total|node_cpu_seconds_total"
+          targetLabel: "drop_node_exporter_metric"
+          replacement: "0"
+          action: replace
+        - sourceLabels: [drop_node_exporter_metric]
+          regex: "1"
+          action: drop
+        - regex: "drop_node_exporter_metric"
+          action: labeldrop
+        - action: drop
+          regex: 'go_.*|process_.*|promhttp_.*|node_scrape_collector.*'
+          sourceLabels: [__name__]
+        - action: drop
+          regex: '.*_bucket$'
+          sourceLabels: [__name__]
+      namespace: ""
+      podTargetLabels: []
+      proxyUrl: ""
+      relabelings:
+        - action: replace
+          sourceLabels: [__meta_kubernetes_endpoint_node_name]
+          targetLabel: node
+          regex: "(.+)"
+        - action: replace
+          sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+          regex: "(.+)"
+      sampleLimit: 0
+      scheme: http
+      scrapeTimeout: "5s"
+      selectorOverride: {}
+      targetLabels: []
+      targetLimit: 0
+      tlsConfig: {}
+    podMonitor:
+      additionalLabels: {}
+      apiVersion: ""
+      attachMetadata:
+        node: false
+      authorization: {}
+      basicAuth: {}
+      bearerTokenSecret: {}
+      enableHttp2: ""
+      enabled: false
+      filterRunning: ""
+      followRedirects: ""
+      honorLabels: true
+      honorTimestamps: true
+      interval: "10s"
+      jobLabel: jobLabel
+      labelLimit: 0
+      labelNameLengthLimit: 0
+      labelValueLengthLimit: 0
+      metricRelabelings: []
+      namespace: ""
+      oauth2: {}
+      params: {}
+      path: /metrics
+      podTargetLabels: []
+      proxyUrl: ""
+      relabelings: []
+      sampleLimit: 0
+      scheme: http
+      scrapeTimeout: "5s"
+      selectorOverride: {}
+      targetLimit: 0
+      tlsConfig: {}
+  rbac:
+    create: true
+    pspEnabled: false
+  readinessProbe:
+    failureThreshold: 3
+    httpGet:
+      httpHeaders: []
+      scheme: http
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 1
+  releaseLabel: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  restartPolicy: null
+  revisionHistoryLimit: 10
+  secrets: []
+  securityContext:
+    fsGroup: 65534
+    runAsGroup: 65534
+    runAsNonRoot: true
+    runAsUser: 65534
+  service:
+    annotations:
+      prometheus.io/scrape: "true"
+    clusterIP: ""
+    enabled: true
+    externalTrafficPolicy: ""
+    internalTrafficPolicy: ""
+    ipDualStack:
+      enabled: false
+      ipFamilies:
+      - IPv6
+      - IPv4
+      ipFamilyPolicy: PreferDualStack
+    labels:
+      jobLabel: node-exporter
+    listenOnAllInterfaces: true
+    nodePort: null
+    port: 9100
+    portName: http-metrics
+    servicePort: ""
+    targetPort: 9100
+    type: ClusterIP
+  serviceAccount:
+    annotations: {}
+    automountServiceAccountToken: false
+    create: true
+    imagePullSecrets: []
+    name: null
+  sidecarHostVolumeMounts: []
+  sidecarVolumeMount: []
+  sidecars: []
+  terminationGracePeriodSeconds: null
+  terminationMessageParams:
+    enabled: false
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+  tlsSecret:
+    caItem: ""
+    certItem: tls.crt
+    enabled: false
+    keyItem: tls.key
+    secretName: prometheus-node-exporter-tls
+    volumeName: prometheus-node-exporter-tls
+  tolerations:
+  - effect: NoSchedule
+    operator: Exists
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 1
+    type: RollingUpdate
+  version: ""
+  verticalPodAutoscaler:
+    controlledResources: []
+    enabled: false
+    maxAllowed: {}
+    minAllowed: {}
+prometheus-windows-exporter:
+  config: |-
+    collectors:
+      enabled: '[defaults],memory,container'
+  podLabels:
+    jobLabel: windows-exporter
+  prometheus:
+    monitor:
+      enabled: false
+      jobLabel: jobLabel
+  releaseLabel: true
+prometheusOperator:
+  admissionWebhooks:
+    annotations: {}
+    caBundle: ""
+    certManager:
+      enabled: true
+      issuerRef:
+        name: producer-ca-issuer
+        kind: ClusterIssuer
+        group: cert-manager.io
+      admissionCert:
+        duration: "43800h"
+        revisionHistoryLimit: 3      
+      # rootCert:
+      #  duration: "8760h"
+      #  revisionHistoryLimit: 3
+    createSecretJob:
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
+        readOnlyRootFilesystem: true
+    deployment:
+      affinity: {}
+      annotations: {}
+      automountServiceAccountToken: true
+      containerSecurityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
+        readOnlyRootFilesystem: true
+      dnsConfig: {}
+      enabled: false
+      hostNetwork: false
+      image:
+        pullPolicy: IfNotPresent
+        registry: quay.io
+        repository: prometheus-operator/admission-webhook
+        sha: ""
+        tag: ""
+      labels: {}
+      livenessProbe:
+        enabled: true
+        failureThreshold: 3
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        successThreshold: 1
+        timeoutSeconds: 1
+      nodeSelector:
+        node-role: master
+      podAnnotations: {}
+      podDisruptionBudget:
+        enabled: false
+        minAvailable: 1
+        unhealthyPodEvictionPolicy: AlwaysAllow
+      podLabels: {}
+      readinessProbe:
+        enabled: true
+        failureThreshold: 3
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        successThreshold: 1
+        timeoutSeconds: 1
+      replicas: 1
+      resources: {}
+      revisionHistoryLimit: 10
+      securityContext:
+        fsGroup: 65534
+        runAsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      service:
+        additionalPorts: []
+        annotations: {}
+        clusterIP: ""
+        externalIPs: []
+        externalTrafficPolicy: Cluster
+        ipDualStack:
+          enabled: false
+          ipFamilies:
+          - IPv6
+          - IPv4
+          ipFamilyPolicy: PreferDualStack
+        labels: {}
+        loadBalancerIP: ""
+        loadBalancerSourceRanges: []
+        nodePort: 31080
+        nodePortTls: 31443
+        type: ClusterIP
+      serviceAccount:
+        annotations: {}
+        automountServiceAccountToken: false
+        create: true
+        name: ""
+      strategy: {}
+      tls:
+        enabled: true
+        internalPort: 10250
+        tlsMinVersion: VersionTLS13
+      tolerations: []
+    enabled: true
+    failurePolicy: "Fail"
+    matchConditions: {}
+    mutatingWebhookConfiguration:
+      annotations: {}
+    namespaceSelector: {}
+    objectSelector: {}
+    patch:
+      affinity: {}
+      annotations: {}
+      enabled: false
+      image:
+        pullPolicy: IfNotPresent
+        registry: ghcr.io
+        repository: jkroepke/kube-webhook-certgen
+        sha: ""
+        tag: 1.7.4
+      nodeSelector: {}
+      podAnnotations: {}
+      priorityClassName: ""
+      resources: {}
+      securityContext:
+        runAsGroup: 2000
+        runAsNonRoot: true
+        runAsUser: 2000
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccount:
+        annotations: {}
+        automountServiceAccountToken: true
+        create: true
+      tolerations: []
+      ttlSecondsAfterFinished: 60
+    patchWebhookJob:
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
+        readOnlyRootFilesystem: true
+    timeoutSeconds: 10
+    validatingWebhookConfiguration:
+      annotations: {}
+  affinity: {}
+  alertmanagerConfigNamespaces: []
+  alertmanagerInstanceNamespaces: []
+  alertmanagerInstanceSelector: ""
+  annotations: {}
+  automountServiceAccountToken: true
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+    readOnlyRootFilesystem: true
+  denyNamespaces: []
+  dnsConfig: {}
+  enabled: true
+  env:
+    GOGC: "30"
+  extraArgs: []
+  extraVolumeMounts: []
+  extraVolumes: []
+  fullnameOverride: ""
+  hostNetwork: false
+  image:
+    pullPolicy: IfNotPresent
+    registry: quay.io
+    repository: prometheus-operator/prometheus-operator
+    sha: ""
+    tag: ""
+  kubeletEndpointSliceEnabled: false
+  kubeletEndpointsEnabled: true
+  kubeletService:
+    enabled: true
+    name: ""
+    namespace: kube-system
+    selector: ""
+  labels: {}
+  lifecycle: {}
+  livenessProbe:
+    enabled: true
+    failureThreshold: 3
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 1
+  namespaces: {}
+  networkPolicy:
+    enabled: false
+    flavor: kubernetes
+  nodeSelector:
+    node-role: master
+  podAnnotations: {}
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    unhealthyPodEvictionPolicy: AlwaysAllow
+  podLabels: {}
+  prometheusConfigReloader:
+    enableProbe: false
+    image:
+      registry: quay.io
+      repository: prometheus-operator/prometheus-config-reloader
+      sha: ""
+      tag: ""
+    resources: {}
+  prometheusInstanceNamespaces: []
+  prometheusInstanceSelector: ""
+  readinessProbe:
+    enabled: true
+    failureThreshold: 3
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 200Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  revisionHistoryLimit: 10
+  secretFieldSelector: type!=kubernetes.io/dockercfg,type!=kubernetes.io/service-account-token,type!=helm.sh/release.v1
+  securityContext:
+    fsGroup: 65534
+    runAsGroup: 65534
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  service:
+    additionalPorts: []
+    annotations: {}
+    clusterIP: ""
+    externalIPs: []
+    externalTrafficPolicy: Cluster
+    ipDualStack:
+      enabled: false
+      ipFamilies:
+      - IPv6
+      - IPv4
+      ipFamilyPolicy: PreferDualStack
+    labels: {}
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    nodePort: 30080
+    nodePortTls: 30443
+    type: ClusterIP
+  serviceAccount:
+    annotations: {}
+    automountServiceAccountToken: true
+    create: true
+    name: ""
+  serviceMonitor:
+    additionalLabels: {}
+    interval: "10s"
+    labelLimit: 0
+    labelNameLengthLimit: 0
+    labelValueLengthLimit: 0
+    metricRelabelings:
+      - action: drop
+        regex: '.*_bucket$'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'go_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'process_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_operator_build_info|prometheus_operator_feature_gate'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_operator_kubelet_managed_resource'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_operator_kubernetes_client_http_request_duration_seconds_.*|prometheus_operator_kubernetes_client_rate_limiter_duration_seconds_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        separator: ';'
+        regex: '^prometheus_operator_kubernetes_client_http_requests_total;(2|3)..$'
+        sourceLabels: [__name__, status_code]
+      - action: drop
+        regex: 'prometheus_operator_list_operations_total|prometheus_operator_node_syncs_total|prometheus_operator_node_address_lookup_errors_total'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_operator_list_operations_total|prometheus_operator_node_syncs_total|prometheus_operator_reconcile_duration_seconds_.*'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_operator_syncs;ok'
+        sourceLabels: [__name__,status]
+      - action: drop
+        regex: 'prometheus_operator_triggered_total'
+        sourceLabels: [__name__]
+      - action: drop
+        regex: 'prometheus_operator_workqueue_latency_seconds_.*|prometheus_operator_workqueue_work_duration_seconds_.*'
+        sourceLabels: [__name__]
+    relabelings: []
+    sampleLimit: 0
+    scrapeTimeout: "5s"
+    selfMonitor: true
+    targetLimit: 0
+  strategy: {}
+  terminationGracePeriodSeconds: 30
+  thanosImage:
+    registry: quay.io
+    repository: thanos/thanos
+    sha: ""
+    tag: v0.40.1
+  thanosRulerInstanceNamespaces: []
+  thanosRulerInstanceSelector: ""
+  tls:
+    enabled: true
+    internalPort: 10250
+    tlsMinVersion: VersionTLS13
+  tolerations: []
+  verticalPodAutoscaler:
+    controlledResources: []
+    enabled: false
+    maxAllowed: {}
+    minAllowed: {}
+    updatePolicy:
+      updateMode: Auto
+thanosRuler:
+  annotations: {}
+  enabled: false
+  extraSecret:
+    annotations: {}
+    data: {}
+  ingress:
+    annotations: {}
+    enabled: false
+    hosts: []
+    ingressClassName: ""
+    labels: {}
+    paths: []
+    tls: []
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    unhealthyPodEvictionPolicy: AlwaysAllow
+  route:
+    main:
+      additionalRules: []
+      annotations: {}
+      apiVersion: gateway.networking.k8s.io/v1
+      enabled: false
+      filters: []
+      hostnames: []
+      httpsRedirect: false
+      kind: HTTPRoute
+      labels: {}
+      matches:
+      - path:
+          type: PathPrefix
+          value: /
+      parentRefs: []
+  service:
+    additionalPorts: []
+    annotations: {}
+    clusterIP: ""
+    enabled: true
+    externalIPs: []
+    externalTrafficPolicy: Cluster
+    ipDualStack:
+      enabled: false
+      ipFamilies:
+      - IPv6
+      - IPv4
+      ipFamilyPolicy: PreferDualStack
+    labels: {}
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    nodePort: 30905
+    port: 10902
+    targetPort: 10902
+    type: ClusterIP
+  serviceAccount:
+    annotations: {}
+    create: true
+    name: ""
+  serviceMonitor:
+    additionalEndpoints: []
+    additionalLabels: {}
+    bearerTokenFile: null
+    interval: "10s"
+    labelLimit: 0
+    labelNameLengthLimit: 0
+    labelValueLengthLimit: 0
+    metricRelabelings: []
+    proxyUrl: ""
+    relabelings: []
+    sampleLimit: 0
+    scheme: ""
+    selfMonitor: true
+    targetLimit: 0
+    tlsConfig: {}
+  thanosRulerSpec:
+    additionalArgs: []
+    additionalConfig: {}
+    additionalConfigString: ""
+    affinity: {}
+    alertDropLabels: []
+    alertmanagersConfig:
+      existingSecret: {}
+      secret: {}
+    containers: []
+    evaluationInterval: "10s"
+    externalPrefix: null
+    externalPrefixNilUsesHelmValues: true
+    image:
+      registry: quay.io
+      repository: thanos/thanos
+      sha: ""
+      tag: v0.40.1
+    initContainers: []
+    labels: {}
+    listenLocal: false
+    logFormat: logfmt
+    logLevel: info
+    nodeSelector: {}
+    objectStorageConfig:
+      existingSecret: {}
+      secret: {}
+    paused: false
+    podAntiAffinity: soft
+    podAntiAffinityTopologyKey: kubernetes.io/hostname
+    podMetadata: {}
+    portName: web
+    priorityClassName: ""
+    queryConfig:
+      existingSecret: {}
+      secret: {}
+    queryEndpoints: []
+    replicas: 1
+    resources: {}
+    retention: 24h
+    routePrefix: /
+    ruleNamespaceSelector: {}
+    ruleSelector: {}
+    ruleSelectorNilUsesHelmValues: true
+    securityContext:
+      fsGroup: 2000
+      runAsGroup: 2000
+      runAsNonRoot: true
+      runAsUser: 1000
+      seccompProfile:
+        type: RuntimeDefault
+    serviceName: null
+    storage: {}
+    tolerations: []
+    topologySpreadConstraints: []
+    volumeMounts: []
+    volumes: []
+    web: {}
+windowsMonitoring:
+  enabled: false

@@ -1,0 +1,66 @@
+prometheusOperator:
+  admissionWebhooks:
+    certManager:
+      enabled: true
+      issuerRef:
+        name: proudcer-ca-issuer
+        kind: ClusterIssuer
+        group: cert-manager.io
+      admissionCert:
+        duration: "43800h"
+        revisionHistoryLimit: 3
+      # rootCert:
+      #  duration: "8760h"
+      #  revisionHistoryLimit: 3
+    patch:
+      enabled: false
+    service:
+      nodeSelector:
+        node-role: worker
+    resources:
+      requests:
+        cpu: 50m
+        memory: 200Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+    serviceMonitor:
+      metricRelabelings:
+        - action: drop
+          regex: ".*_bucket$"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "go_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "process_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_operator_build_info|prometheus_operator_feature_gate"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_operator_kubelet_managed_resource"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_operator_kubernetes_client_http_request_duration_seconds_.*|prometheus_operator_kubernetes_client_rate_limiter_duration_seconds_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          separator: ";"
+          regex: "^prometheus_operator_kubernetes_client_http_requests_total;(2|3)..$"
+          sourceLabels: [__name__, status_code]
+        - action: drop
+          regex: "prometheus_operator_list_operations_total|prometheus_operator_node_syncs_total|prometheus_operator_node_address_lookup_errors_total"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_operator_list_operations_total|prometheus_operator_node_syncs_total|prometheus_operator_reconcile_duration_seconds_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_operator_syncs;ok"
+          sourceLabels: [__name__, status]
+        - action: drop
+          regex: "prometheus_operator_triggered_total"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_operator_workqueue_latency_seconds_.*|prometheus_operator_workqueue_work_duration_seconds_.*"
+          sourceLabels: [__name__]
+    relabelings: []

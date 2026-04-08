@@ -1,0 +1,126 @@
+prometheus:
+  enabled: true
+  agentMode: false
+  ingress:
+    annotations:
+      cert-manager.io/cluster-issuer: producer-ca-issuer
+    enabled: true
+    hosts:
+      - producer.prometheus.example.com
+    ingressClassName: "traefik"
+    labels: {}
+    paths:
+      - /
+    tls:
+      - secretName: prometheus-general-tls
+        hosts:
+          - producer.prometheus.example.com
+  prometheusSpec:
+    externalLabels:
+      cluster: "producer"
+    externalUrl: "https://producer.prometheus.example.com"
+    nodeSelector:
+      node-role: worker
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
+    remoteWrite: []
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2
+        memory: 2Gi
+    retention: 10d
+    retentionSize: "20GiB"
+    scrapeClasses:
+      - name: cluster-label
+        default: true
+        relabelings:
+          - targetLabel: cluster
+            replacement: producer
+    storageSpec:
+      volumeClaimTemplate:
+        metadata:
+          name: prometheus-pv
+        spec:
+          storageClassName: nfs-client-storageclass
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
+    serviceMonitor:
+      metricRelabelings:
+        - action: drop
+          regex: ".*_bucket$"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "go_gc_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "go_memstats_.*|go_memory_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "go_goroutines|go_info|go_threads"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "go_sched_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "go_sync_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "process_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "net_conntrack_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "promhttp_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_api_notification_active_subscribers|prometheus_api_notification_updates_dropped_total|prometheus_api_notification_updates_sent_total"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_notifications_dropped_total|prometheus_notifications_latency_seconds"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_build_info|prometheus_config_last_reload_success_timestamp_seconds"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_http_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_template_text_expansion_failures_total|prometheus_template_text_expansions_total|prometheus_treecache_watcher_goroutines|prometheus_treecache_zookeeper_failures_total"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_engine_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_remote_storage_exemplars_in_total|prometheus_remote_storage_highest_timestamp_in_seconds|prometheus_remote_storage_histograms_in_total|prometheus_remote_storage_string_interner_zero_reference_releases_total"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_rule_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_sd_(azure_.*|consul_.*|dns_.*|file_.*|http_failures_total|kubernetes_http_request_.*|kubernetes_workqueue_.*|kuma_.*|linode_failures_total|received_updates_total|updates_total)"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_tsdb_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_target_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_web_federation_errors_total|prometheus_web_federation_warnings_total"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "scrape_samples_scraped|scrape_samples_post_metric_relabeling|scrape_series_added"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "reloader_.*"
+          sourceLabels: [__name__]
+        - action: drop
+          regex: "prometheus_remote_storage_histograms_.*|prometheus_remote_storage_exemplars_.*|prometheus_remote_storage_max_samples_per_send|prometheus_remote_storage_shards_desired|prometheus_remote_storage_shards_min|prometheus_remote_storage_shards_max|prometheus_remote_storage_shards|prometheus_remote_storage_shards|prometheus_remote_storage_shard_capacity|prometheus_remote_storage_sent_batch_duration_seconds|prometheus_remote_storage_highest_timestamp_in_seconds|prometheus_remote_storage_samples_pending|prometheus_remote_storage_enqueue_retries_total|prometheus_remote_read_handler_queries|prometheus_remote_storage_bytes_total|prometheus_remote_storage_metadata_bytes_total|prometheus_remote_storage_metadata_total"
+          sourceLabels: [__name__]

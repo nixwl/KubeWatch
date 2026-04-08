@@ -1,0 +1,57 @@
+grafana:
+  # default user: admin
+  admin:
+    existingSecret: ""
+    passwordKey: admin-password
+    userKey: admin-user
+  adminUser: admin
+  adminPassword: admin
+  # pv/pvc configuration for Grafana
+  persistence:
+    accessModes:
+      - ReadWriteOnce
+    disableWarning: false
+    enabled: true
+    storageClassName: nfs-client-storageclass
+    extraPvcLabels: {}
+    finalizers:
+      - kubernetes.io/pvc-protection
+    inMemory:
+      enabled: false
+    lookupVolumeName: true
+    size: 2Gi
+    type: pvc
+    volumeName: ""
+  # resources limits and requests for Grafana
+  downloadDashboards:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+  initChownData:
+    enabled: true
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+  resources:
+    requests:
+      cpu: 300m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 512Mi
+  sidecar:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 100m
+        memory: 512Mi

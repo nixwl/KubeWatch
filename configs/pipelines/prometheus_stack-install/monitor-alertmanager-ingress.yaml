@@ -1,0 +1,15 @@
+alertmanager:
+  ingress:
+    annotations:
+      cert-manager.io/cluster-issuer: monitor-ca-issuer
+    enabled: true
+    hosts:
+      - alertmanager.example.com
+    ingressClassName: "traefik"
+    labels: {}
+    paths:
+      - /
+    tls:
+      - secretName: alertmanager-general-tls
+        hosts:
+          - alertmanager.example.com

@@ -1,0 +1,17 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: traefik-tls
+  namespace: kube-system
+spec:
+  secretName: traefik-tls
+  issuerRef:
+    name: producer-ca-issuer
+    kind: ClusterIssuer
+  dnsNames:
+    - "*.traefik.com"
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth
+    - client auth

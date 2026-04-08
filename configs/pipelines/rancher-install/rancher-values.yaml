@@ -1,0 +1,16 @@
+bootstrapPassword: "123456"
+ingress:
+  tls:
+    source: "rancher"
+  extraAnnotations:
+    cert-manager.io/cluster-issuer: monitor-ca-issuer
+auditLog:
+  level: 1
+addLocal: true
+hostname: rancher.example.com
+replicas: 1
+privateCA: false
+rancherImagePullPolicy: IfNotPresent
+
+proxy: "http://<proxy_url:proxy_port>/"
+noProxy: "127.0.0.0/8,10.0.0.0/8,cattle-system.svc,172.16.0.0/12,.svc,.cluster.local"

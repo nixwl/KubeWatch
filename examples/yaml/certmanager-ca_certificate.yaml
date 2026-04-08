@@ -1,0 +1,18 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: producer-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  duration: 8760h
+  renewBefore: 720h
+  commonName: producer-ca
+  secretName: producer-ca-secret
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: producer-cluster-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io

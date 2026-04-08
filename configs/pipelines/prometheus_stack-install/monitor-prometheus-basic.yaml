@@ -1,0 +1,61 @@
+prometheus:
+  prometheusSpec:
+    # Cconfigure labels.
+    # Examples: up{job="kubernetes-nodes", instance="192.168.52.9:9100", cluster="rancher-monitor"}  1
+    externalLabels:
+      cluster: "rancher-monitor"
+    externalUrl: "https://prometheus.example.com"
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled:
+    # pod scheduling strategy.
+    podAntiAffinity: soft
+    podAntiAffinityTopologyKey: kubernetes.io/hostname
+    # remote rw settings
+    remoteRead: []
+    remoteWrite: []
+    remoteWriteDashboards:
+    # resource limitaion
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2
+        memory: 2Gi
+    # data retention settings.
+    retention: 10d
+    retentionSize: "20GiB"
+    # disable including labels in alert data
+    prometheusExternalLabelName: ""
+    prometheusExternalLabelNameClear:
+    # replicas setting
+    replicas: 1
+    replicaExternalLabelName: ""
+    replicaExternalLabelNameClear: false
+    # monitoring data scrape settings.
+    sampleLimit: false
+    scrapeClasses:
+    - name: cluster-label
+        default: true
+        relabelings:
+        - targetLabel: cluster
+            replacement: rancher-monitor
+    scrapeConfigNamespaceSelector: {}
+    scrapeConfigSelector: {}
+    scrapeConfigSelectorNilUsesHelmValues: true
+    scrapeFailureLogFile: ""
+    scrapeInterval: "10s"
+    scrapeProtocols: []
+    scrapeTimeout: "10s"
+    # pv & pvc
+    storageSpec:
+      volumeClaimTemplate:
+        metadata:
+        name: prometheus-pv
+        spec:
+        storageClassName: nfs-client-storageclass
+        accessModes: ["ReadWriteOnce"]
+        resources:
+            requests:
+            storage: 20Gi
