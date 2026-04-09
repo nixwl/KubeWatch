@@ -1,0 +1,164 @@
+# Recommended template inferred from TEMP/K3S Prometheus Alerts Configuration/kube-state-metric.md.
+# Metrics basis: configs/pipelines/metric-aggregate/kube-state-metrics.yaml plus retained kube-state-metrics raw series where pod-level context is required.
+# TEMP mentioned daemonset and cronjob aggregate metrics but did not define concrete alert names for them.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kube-state-metrics-alerts
+  namespace: monitor
+  labels:
+    release: monitor
+    app.kubernetes.io/instance: monitor
+spec:
+  groups:
+    - name: kube-state-node-alerts
+      rules:
+        - alert: NodeNotReady
+          expr: |
+            kube_state:node:not_ready > 0
+          for: 10m
+          labels:
+            severity: critical
+            category: kube_state_node
+            anomaly_type: node_not_ready
+          annotations:
+            summary: "A node remains NotReady ({{ $labels.node }})"
+            description: "The node has stayed in a NotReady state for 10 minutes."
+        - alert: NodeMemoryPressure
+          expr: |
+            kube_state:node:memory_pressure > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_state_node
+            anomaly_type: node_memory_pressure
+          annotations:
+            summary: "A node reports MemoryPressure ({{ $labels.node }})"
+            description: "The kubelet reports MemoryPressure for 10 minutes."
+        - alert: NodeDiskPressure
+          expr: |
+            kube_state:node:disk_pressure > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_state_node
+            anomaly_type: node_disk_pressure
+          annotations:
+            summary: "A node reports DiskPressure ({{ $labels.node }})"
+            description: "The kubelet reports DiskPressure for 10 minutes."
+        - alert: NodePIDPressure
+          expr: |
+            kube_state:node:pid_pressure > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_state_node
+            anomaly_type: node_pid_pressure
+          annotations:
+            summary: "A node reports PIDPressure ({{ $labels.node }})"
+            description: "The kubelet reports PIDPressure for 10 minutes."
+        - alert: NodeUnschedulable
+          expr: |
+            kube_state:node:unschedulable > 0
+          for: 30m
+          labels:
+            severity: warning
+            category: kube_state_node
+            anomaly_type: node_unschedulable
+          annotations:
+            summary: "A node remains unschedulable ({{ $labels.node }})"
+            description: "The node stays marked unschedulable for 30 minutes."
+    - name: kube-state-pod-alerts
+      rules:
+        - alert: PodRestartsHigh
+          expr: |
+            sum by (cluster, namespace, pod) (increase(kube_pod_container_status_restarts_total[5m])) > 3
+          for: 5m
+          labels:
+            severity: warning
+            category: kube_state_pod
+            anomaly_type: pod_restarts_high
+          annotations:
+            summary: "A pod is restarting frequently ({{ $labels.namespace }}/{{ $labels.pod }})"
+            description: "Container restarts increase by more than 3 within 5 minutes."
+        - alert: PodNotReadyExists
+          expr: |
+            max by (cluster, namespace, pod) (1 - kube_pod_status_ready{condition="true"}) > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_state_pod
+            anomaly_type: pod_not_ready
+          annotations:
+            summary: "A pod remains NotReady ({{ $labels.namespace }}/{{ $labels.pod }})"
+            description: "The pod stays NotReady for 10 minutes."
+        - alert: PodsWithWaitingContainers
+          expr: |
+            max by (cluster, namespace, pod) (kube_pod_container_status_waiting) > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_state_pod
+            anomaly_type: pod_waiting_containers
+          annotations:
+            summary: "A pod contains waiting containers ({{ $labels.namespace }}/{{ $labels.pod }})"
+            description: "At least one container remains in Waiting state for 10 minutes."
+        - alert: PodReadyRatioLow
+          expr: |
+            kube_state:pod:pod_ready:ratio < 0.90
+          for: 15m
+          labels:
+            severity: warning
+            category: kube_state_pod
+            anomaly_type: pod_ready_ratio_low
+          annotations:
+            summary: "Cluster pod readiness ratio is low"
+            description: "The overall Ready ratio across pods falls below 90% for 15 minutes."
+    - name: kube-state-deployment-alerts
+      rules:
+        - alert: DeploymentReplicasMissing
+          expr: |
+            kube_state:deployment:deploy_replicas_missing:sum > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_state_deployment
+            anomaly_type: deployment_replicas_missing
+          annotations:
+            summary: "A namespace is missing deployment replicas ({{ $labels.namespace }})"
+            description: "At least one expected deployment replica stays unavailable for 10 minutes."
+        - alert: DeploymentAvailabilityLow
+          expr: |
+            kube_state:deployment:deploy_availability:ratio < 0.90
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_state_deployment
+            anomaly_type: deployment_availability_low
+          annotations:
+            summary: "Deployment availability ratio is low ({{ $labels.namespace }})"
+            description: "Available deployment replicas fall below 90% of desired replicas for 10 minutes."
+    - name: kube-state-job-alerts
+      rules:
+        - alert: JobsFailedExists
+          expr: |
+            kube_state:job:jobs_failed:count > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_state_job
+            anomaly_type: jobs_failed_exists
+          annotations:
+            summary: "Failed jobs exist in the namespace ({{ $labels.namespace }})"
+            description: "At least one failed Job remains present for 10 minutes."
+        - alert: JobsRunningOver1hExists
+          expr: |
+            kube_state:job:jobs_running_over_1h:count > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_state_job
+            anomaly_type: jobs_running_too_long
+          annotations:
+            summary: "Long-running jobs exceed one hour ({{ $labels.namespace }})"
+            description: "At least one active Job keeps running for more than 1 hour."

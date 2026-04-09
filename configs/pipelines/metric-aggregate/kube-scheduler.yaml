@@ -1,0 +1,13 @@
+# Extracted from: additionalPrometheusRulesMap.kube-aggregates (ks-aggregates)
+# Source: ../prometheus_stack-install/monitor-kube-prometheus-stack-values.yaml
+groups:
+  - name: ks-aggregates
+    rules:
+      - record: kube:scheduler:pending_pods:total
+        expr: sum by (cluster) (scheduler_pending_pods)
+      - record: kube:scheduler:pod_scheduling_attempts:avg5m
+        expr: sum by (cluster) (rate(scheduler_pod_scheduling_attempts_sum[5m])) / clamp_min(sum by (cluster) (rate(scheduler_pod_scheduling_attempts_count[5m])), 1e-9)
+      - record: kube:scheduler:cache_size:assumed_pods
+        expr: max by (cluster) (scheduler_scheduler_cache_size{type="assumed_pods"})
+      - record: kube:scheduler:scheduling_algorithm_duration_seconds:avg5m
+        expr: sum by (cluster) (rate(scheduler_scheduling_algorithm_duration_seconds_sum[5m])) / clamp_min(sum by (cluster) (rate(scheduler_scheduling_algorithm_duration_seconds_count[5m])), 1e-9)

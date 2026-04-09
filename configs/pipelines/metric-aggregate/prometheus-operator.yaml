@@ -1,0 +1,39 @@
+# Extracted from: additionalPrometheusRulesMap.prometheus-operator-aggregates
+# Source: ../prometheus_stack-install/monitor-kube-prometheus-stack-values.yaml
+groups:
+  - name: po-resource-manage
+    rules:
+      - record: prometheus_operator:managed_resources_rejected_ratio
+        expr: sum by (cluster, namespace, controller, resource) (max by (cluster, namespace, controller, resource, state) (prometheus_operator_managed_resources{state="rejected"})) / clamp_min(sum by (cluster, namespace, controller, resource) (max by (cluster, namespace, controller, resource, state) (prometheus_operator_managed_resources)), 1)
+  - name: po-request
+    rules:
+      - record: prometheus_operator:kube_client_http_requests_errors:rate5m
+        expr: sum by (cluster, namespace) (rate(prometheus_operator_kubernetes_client_http_requests_total{status_code=~"[45].."}[5m]))
+  - name: po-list-sync
+    rules:
+      - record: prometheus_operator:list_operations_failed:rate5m
+        expr: sum by (cluster, namespace, controller) (rate(prometheus_operator_list_operations_failed_total{job="monitor-kube-prometheus-st-operator"}[5m]))
+      - record: prometheus_operator:node_syncs_failed:rate5m
+        expr: sum by (cluster, namespace, resource) (rate(prometheus_operator_node_syncs_failed_total{job="monitor-kube-prometheus-st-operator"}[5m]))
+  - name: po-controller-ready-sync
+    rules:
+      - record: prometheus_operator:not_ready
+        expr: max by (cluster, namespace, controller) (max_over_time(prometheus_operator_ready{job="monitor-kube-prometheus-st-operator"}[5m])) == bool 0
+      - record: prometheus_operator:reconcile_errors:rate5m
+        expr: sum by (cluster, namespace, controller) (rate(prometheus_operator_reconcile_errors_total{job="monitor-kube-prometheus-st-operator"}[5m]))
+      - record: prometheus_operator:status_update_errors:rate5m
+        expr: sum by (cluster, namespace, controller) (rate(prometheus_operator_status_update_errors_total{job="monitor-kube-prometheus-st-operator"}[5m]))
+      - record: prometheus_operator:sync_failed_objects
+        expr: max by (cluster, namespace, controller) (prometheus_operator_syncs{status="failed",job="monitor-kube-prometheus-st-operator"})
+  - name: po-watch-trigger
+    rules:
+      - record: prometheus_operator:watch_errors:ratio5m
+        expr: sum by (cluster, namespace, controller) (rate(prometheus_operator_watch_operations_failed_total{job="monitor-kube-prometheus-st-operator"}[5m])) / clamp_min(sum by (cluster, namespace, controller) (rate(prometheus_operator_watch_operations_total{job="monitor-kube-prometheus-st-operator"}[5m])), 1)
+  - name: po-workqueue
+    rules:
+      - record: prometheus_operator:workqueue_depth
+        expr: max by (cluster, namespace, controller, name) (prometheus_operator_workqueue_depth{job="monitor-kube-prometheus-st-operator"})
+      - record: prometheus_operator:workqueue_longest_running_seconds
+        expr: max by (cluster, namespace, controller, name) (prometheus_operator_workqueue_longest_running_processor_seconds{job="monitor-kube-prometheus-st-operator"})
+      - record: prometheus_operator:workqueue_retries:rate5m
+        expr: sum by (cluster, namespace, controller, name) (rate(prometheus_operator_workqueue_retries_total{job="monitor-kube-prometheus-st-operator"}[5m]))

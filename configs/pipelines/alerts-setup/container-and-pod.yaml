@@ -1,0 +1,124 @@
+# Recommended template inferred from TEMP/K3S Prometheus Alerts Configuration/container.md.
+# Metrics basis: configs/pipelines/metric-aggregate/container-and-pod.yaml plus retained node memory metrics.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: container-and-pod-alerts
+  namespace: monitor
+  labels:
+    release: monitor
+    app.kubernetes.io/instance: monitor
+spec:
+  groups:
+    - name: pod-cpu-alerts
+      rules:
+        - alert: PodCPUThrottlingHigh
+          expr: |
+            kube:pod_cpu_throttle_ratio:rate5m > 0.25
+          for: 10m
+          labels:
+            severity: warning
+            category: pod_cpu
+            anomaly_type: pod_cpu_throttling
+          annotations:
+            summary: "Pod CPU throttling ratio is high ({{ $labels.namespace }}/{{ $labels.pod }})"
+            description: "The pod spends more than 25% of its CFS periods throttled for 10 minutes."
+        - alert: PodCPUUsageHighCores
+          expr: |
+            kube:pod_cpu_cores:rate5m > 2
+          for: 10m
+          labels:
+            severity: warning
+            category: pod_cpu
+            anomaly_type: pod_cpu_usage_high
+          annotations:
+            summary: "Pod CPU usage is sustained at a high core count ({{ $labels.namespace }}/{{ $labels.pod }})"
+            description: "The pod consumes more than 2 CPU cores on average for 10 minutes."
+    - name: pod-memory-alerts
+      rules:
+        - alert: PodMemoryShareOfNodeTotalHigh
+          expr: |
+            kube:pod_mem_working_set_bytes / on(cluster, node) group_left(namespace, pod) clamp_min(node_memory_MemTotal_bytes{job="node-exporter"}, 1) > 0.30
+          for: 10m
+          labels:
+            severity: warning
+            category: pod_memory
+            anomaly_type: pod_memory_share_of_node
+          annotations:
+            summary: "A pod occupies a large share of its node memory ({{ $labels.namespace }}/{{ $labels.pod }})"
+            description: "The pod working set stays above 30% of node physical memory for 10 minutes."
+        - alert: PodMemoryWorkingSetGrowingFast
+          expr: |
+            kube:pod_mem_working_set_slope_bytes_per_sec:deriv5m > 1e7
+          for: 10m
+          labels:
+            severity: warning
+            category: pod_memory
+            anomaly_type: pod_memory_growth_fast
+          annotations:
+            summary: "Pod working set is growing rapidly ({{ $labels.namespace }}/{{ $labels.pod }})"
+            description: "The pod working set increases by more than 10 MB/s for 10 minutes."
+        - alert: PodMemoryRSSDominates
+          expr: |
+            (kube:pod_mem_rss_bytes / clamp_min(kube:pod_mem_working_set_bytes, 1) > 0.80) and (kube:pod_mem_working_set_bytes > 536870912)
+          for: 10m
+          labels:
+            severity: warning
+            category: pod_memory
+            anomaly_type: pod_memory_rss_dominates
+          annotations:
+            summary: "Pod RSS dominates the working set ({{ $labels.namespace }}/{{ $labels.pod }})"
+            description: "RSS exceeds 80% of the working set while the pod uses more than 512 MiB."
+        - alert: PodMemoryCacheRatioHighUnderNodePressure
+          expr: |
+            (kube:pod_mem_cache_ratio > 0.60) and on(cluster, node) group_left(namespace, pod) (node_exporter:node_mem_headroom_ratio < 0.15)
+          for: 10m
+          labels:
+            severity: warning
+            category: pod_memory
+            anomaly_type: pod_memory_cache_under_pressure
+          annotations:
+            summary: "Pod cache ratio stays high while node memory headroom is low ({{ $labels.namespace }}/{{ $labels.pod }})"
+            description: "The pod cache share exceeds 60% and the hosting node headroom stays below 15% for 10 minutes."
+    - name: pod-filesystem-alerts
+      rules:
+        - alert: PodFilesystemIOSustainedHigh
+          expr: |
+            (
+              kube:pod_fs_bps:rate5m > 10485760
+            )
+            and
+            (
+              kube:pod_fs_bps:rate5m
+              >
+              avg_over_time(kube:pod_fs_bps:rate5m[6h] offset 5m)
+              + 3 * clamp_min(stddev_over_time(kube:pod_fs_bps:rate5m[6h] offset 5m), 1048576)
+            )
+          for: 10m
+          labels:
+            severity: warning
+            category: pod_filesystem
+            anomaly_type: pod_filesystem_io_anomaly
+          annotations:
+            summary: "Pod total filesystem IO is well above its baseline ({{ $labels.namespace }}/{{ $labels.pod }})"
+            description: "Combined read plus write throughput exceeds both an absolute 10 MiB/s floor and the pod 6-hour baseline plus 3 standard deviations for 10 minutes."
+        - alert: PodFilesystemWriteHigh
+          expr: |
+            (
+              kube:pod_fs_write_bps:rate5m > 5242880
+            )
+            and
+            (
+              kube:pod_fs_write_bps:rate5m
+              >
+              avg_over_time(kube:pod_fs_write_bps:rate5m[6h] offset 5m)
+              + 3 * clamp_min(stddev_over_time(kube:pod_fs_write_bps:rate5m[6h] offset 5m), 524288)
+            )
+          for: 10m
+          labels:
+            severity: warning
+            category: pod_filesystem
+            anomaly_type: pod_filesystem_write_anomaly
+          annotations:
+            summary: "Pod write throughput is well above its baseline ({{ $labels.namespace }}/{{ $labels.pod }})"
+            description: "Write throughput exceeds both an absolute 5 MiB/s floor and the pod 6-hour baseline plus 3 standard deviations for 10 minutes."

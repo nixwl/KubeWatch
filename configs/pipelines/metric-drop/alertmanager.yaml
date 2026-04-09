@@ -1,0 +1,51 @@
+# Applies to: alertmanager.serviceMonitor.metricRelabelings
+metricRelabelings:
+  - action: drop
+    regex: 'alertmanager_alerts|alertmanager_alerts_invalid_total|alertmanager_alerts_received_total|alertmanager_marked_alerts'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'alertmanager_build_info'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'alertmanager_cluster_enabled'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'alertmanager_dispatcher_aggregation_groups|alertmanager_dispatcher_alert_processing_duration_seconds_.*'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'alertmanager_http_concurrency_limit_exceeded_total|alertmanager_http_request_duration_seconds_.*|alertmanager_http_requests_in_flight|alertmanager_http_response_size_bytes_.*'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'alertmanager_inhibition_rules|alertmanager_integrations|alertmanager_receivers'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'alertmanager_nflog_.*'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'alertmanager_notification_latency_seconds_.*|alertmanager_notification_requests_failed_total|alertmanager_notification_requests_total'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'alertmanager_config_hash'
+    sourceLabels: [__name__]
+  - action: drop
+    separator: ';'
+    regex: '^(alertmanager_notifications_failed_total|alertmanager_notifications_total);(discord|incidentio|jira|msteams|msteamsv2|opsgenie|pagerduty|pushover|rocketchat|slack|sns|telegram|victorops|webex|wechat)$'
+    sourceLabels: [__name__, integration]
+  - action: drop
+    regex: 'alertmanager_silences|alertmanager_silences_.*'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'go_.*'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'net_conntrack_.*'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'process_.*'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'promhttp_.*'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'reloader_.*'
+    sourceLabels: [__name__]

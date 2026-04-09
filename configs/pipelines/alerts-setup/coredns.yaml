@@ -1,0 +1,205 @@
+# Recommended template inferred from TEMP/K3S Prometheus Alerts Configuration/core-dns.md.
+# Metrics basis: configs/pipelines/metric-aggregate/coredns.yaml.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: coredns-alerts
+  namespace: monitor
+  labels:
+    release: monitor
+    app.kubernetes.io/instance: monitor
+spec:
+  groups:
+    - name: coredns-cache-alerts
+      rules:
+        - alert: CoreDNSCacheRequestRateHigh
+          expr: |
+            (
+              coredns:cache:req_rate5m > 1000
+            )
+            and
+            (
+              coredns:cache:req_rate5m
+              >
+              avg_over_time(coredns:cache:req_rate5m[6h] offset 5m)
+              + 3 * clamp_min(stddev_over_time(coredns:cache:req_rate5m[6h] offset 5m), 50)
+            )
+          for: 10m
+          labels:
+            severity: warning
+            category: coredns_cache
+            anomaly_type: coredns_cache_request_rate_high
+          annotations:
+            summary: "CoreDNS cache request rate is far above baseline ({{ $labels.instance }})"
+            description: "The cache plugin receives unusually high sustained request volume compared with its 6-hour baseline."
+        - alert: CoreDNSCacheHitRatioLow
+          expr: |
+            coredns:cache:hit_ratio5m < 0.40
+          for: 15m
+          labels:
+            severity: warning
+            category: coredns_cache
+            anomaly_type: coredns_cache_hit_ratio_low
+          annotations:
+            summary: "CoreDNS cache hit ratio is low ({{ $labels.instance }})"
+            description: "The cache hit ratio stays below 40% for 15 minutes."
+        - alert: CoreDNSCacheEntriesHigh
+          expr: |
+            coredns:cache:entries > 100000
+          for: 10m
+          labels:
+            severity: warning
+            category: coredns_cache
+            anomaly_type: coredns_cache_entries_high
+          annotations:
+            summary: "CoreDNS cache entry count is unusually high ({{ $labels.instance }})"
+            description: "The cache entry count exceeds 100k for 10 minutes."
+        - alert: CoreDNSCacheCounterResets
+          expr: |
+            coredns:cache:counter_resets5m > 0
+          for: 0m
+          labels:
+            severity: warning
+            category: coredns_cache
+            anomaly_type: coredns_cache_counter_resets
+          annotations:
+            summary: "CoreDNS cache counters reset unexpectedly ({{ $labels.instance }})"
+            description: "Cache request or hit counters reset within the last 5 minutes."
+    - name: coredns-request-alerts
+      rules:
+        - alert: CoreDNSRequestRateHigh
+          expr: |
+            (
+              sum by (cluster, instance) (coredns:dns:req_rate5m) > 1000
+            )
+            and
+            (
+              sum by (cluster, instance) (coredns:dns:req_rate5m)
+              >
+              avg_over_time(sum by (cluster, instance) (coredns:dns:req_rate5m)[6h] offset 5m)
+              + 3 * clamp_min(stddev_over_time(sum by (cluster, instance) (coredns:dns:req_rate5m)[6h] offset 5m), 50)
+            )
+          for: 10m
+          labels:
+            severity: warning
+            category: coredns_request
+            anomaly_type: coredns_request_rate_high
+          annotations:
+            summary: "CoreDNS request rate is far above baseline ({{ $labels.instance }})"
+            description: "DNS request traffic stays well above the 6-hour baseline for 10 minutes."
+        - alert: CoreDNSRcodeErrorRatioHigh
+          expr: |
+            coredns:dns:rcode_error_ratio5m > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            category: coredns_request
+            anomaly_type: coredns_rcode_error_ratio_high
+          annotations:
+            summary: "CoreDNS serves too many error responses ({{ $labels.instance }})"
+            description: "The non-success and non-NXDOMAIN response ratio stays above 5% for 10 minutes."
+        - alert: CoreDNSLatencyHigh
+          expr: |
+            coredns:dns:latency_avg_5m > 0.25
+          for: 10m
+          labels:
+            severity: warning
+            category: coredns_request
+            anomaly_type: coredns_latency_high
+          annotations:
+            summary: "CoreDNS request latency is high ({{ $labels.instance }})"
+            description: "Average DNS handling latency stays above 250 ms for 10 minutes."
+    - name: coredns-forward-alerts
+      rules:
+        - alert: CoreDNSForwardHealthcheckBroken
+          expr: |
+            coredns:forward:healthcheck_broken_rate5m > 0
+          for: 5m
+          labels:
+            severity: critical
+            category: coredns_forward
+            anomaly_type: coredns_forward_healthcheck_broken
+          annotations:
+            summary: "A CoreDNS upstream health check is failing ({{ $labels.instance }})"
+            description: "The forward plugin records broken upstream health checks for 5 minutes."
+        - alert: CoreDNSForwardMaxConcurrentRejects
+          expr: |
+            coredns:forward:max_concurrent_rejects_rate5m > 0
+          for: 5m
+          labels:
+            severity: warning
+            category: coredns_forward
+            anomaly_type: coredns_forward_concurrent_rejects
+          annotations:
+            summary: "CoreDNS is rejecting forward requests due to concurrency limits ({{ $labels.instance }})"
+            description: "The forward plugin rejects requests because the max concurrent limit is reached."
+        - alert: CoreDNSUpstreamLatencyHigh
+          expr: |
+            coredns:forward:upstream_latency_avg_5m > 0.25
+          for: 10m
+          labels:
+            severity: warning
+            category: coredns_forward
+            anomaly_type: coredns_upstream_latency_high
+          annotations:
+            summary: "CoreDNS upstream latency is high ({{ $labels.instance }})"
+            description: "Average upstream forward latency exceeds 250 ms for 10 minutes."
+    - name: coredns-health-alerts
+      rules:
+        - alert: CoreDNSHealthFailRate
+          expr: |
+            coredns:health:fail_rate5m > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: coredns_health
+            anomaly_type: coredns_health_fail_rate
+          annotations:
+            summary: "CoreDNS health checks are failing ({{ $labels.instance }})"
+            description: "Health probe failures continue for 10 minutes."
+    - name: coredns-plugin-alerts
+      rules:
+        - alert: CoreDNSK3sAPIServerErrorRatioHigh
+          expr: |
+            coredns:k3s:apiserver_error_ratio5m > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            category: coredns_plugin
+            anomaly_type: coredns_apiserver_error_ratio
+          annotations:
+            summary: "CoreDNS Kubernetes plugin sees a high apiserver error ratio ({{ $labels.instance }})"
+            description: "More than 5% of Kubernetes-plugin requests to the apiserver fail for 10 minutes."
+        - alert: CoreDNSK3sAPIServerLatencyHigh
+          expr: |
+            coredns:k3s:apiserver_latency_avg5m > 0.25
+          for: 10m
+          labels:
+            severity: warning
+            category: coredns_plugin
+            anomaly_type: coredns_apiserver_latency
+          annotations:
+            summary: "CoreDNS Kubernetes plugin sees high apiserver latency ({{ $labels.instance }})"
+            description: "Average Kubernetes-plugin request latency to the apiserver exceeds 250 ms for 10 minutes."
+        - alert: CoreDNSK3sAPIServerRateLimiterWaitHigh
+          expr: |
+            coredns:k3s:apiserver_rate_limiter_wait_avg5m > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            category: coredns_plugin
+            anomaly_type: coredns_apiserver_rate_limiter_wait
+          annotations:
+            summary: "CoreDNS spends too long waiting on its client-side rate limiter ({{ $labels.instance }})"
+            description: "Average wait time in the Kubernetes-plugin client rate limiter exceeds 50 ms for 10 minutes."
+        - alert: CoreDNSCriticalEventsDetected
+          expr: |
+            coredns:critical_events:rate5m > 0
+          for: 5m
+          labels:
+            severity: critical
+            category: coredns_plugin
+            anomaly_type: coredns_critical_events
+          annotations:
+            summary: "CoreDNS reports reload failures or panics"
+            description: "CoreDNS records reload failures or panics over the last 5 minutes."

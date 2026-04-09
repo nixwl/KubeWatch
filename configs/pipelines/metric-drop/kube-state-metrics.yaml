@@ -1,0 +1,58 @@
+# Applies to:
+# - kube-state-metrics.prometheus.monitor.http.metricRelabelings
+# - kube-state-metrics.prometheus.monitor.metrics.metricRelabelings
+metricRelabelings:
+  - action: drop
+    regex: '.*_bucket$'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'kube_node_(annotations|labels|role|created|deletion_timestamp|info|status_addresses|spec_taint)'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'kube_node_status_(allocatable|capacity);(hugepages_.*|pods|ephemeral_storage)'
+    sourceLabels: [__name__, resource]
+  - action: drop
+    regex: 'kube_node_status_condition;(false|unknown)'
+    sourceLabels: [__name__, status]
+  - action: drop
+    regex: 'kube_namespace_.*'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'kube_pod_container_info|kube_pod_container_status_last_terminated_exitcode|kube_pod_container_status_last_terminated_reason|kube_pod_container_status_last_terminated_timestamp|kube_pod_container_state_started|kube_pod_container_resource_requests|kube_pod_container_status_terminated_reason|kube_pod_container_status_running|kube_pod_container_status_terminated'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'kube_pod_init_container_.*'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'kube_pod_info|kube_pod_created|kube_pod_deletion_timestamp|kube_pod_ips|kube_pod_labels|kube_pod_overhead_cpu_cores|kube_pod_overhead_memory_bytes|kube_pod_restart_policy|kube_pod_runtimeclass_name_info|kube_pod_scheduler|kube_pod_service_account|kube_pod_start_time|kube_pod_spec_volumes_persistentvolumeclaims_info|kube_pod_spec_volumes_persistentvolumeclaims_readonly'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'kube_pod_status_container_ready_time|kube_pod_status_initialized_time|kube_pod_status_ready_time|kube_pod_status_reason|kube_pod_status_qos_class|kube_pod_status_scheduled|kube_pod_status_scheduled_time|kube_pod_status_unschedulable|kube_pod_status_unscheduled_time|kube_pod_tolerations'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'kube_pod_status_ready;(false|unknown)'
+    sourceLabels: [__name__, status]
+  - action: drop
+    regex: 'kube_deployment_annotations|kube_deployment_created|kube_deployment_deletion_timestamp|kube_deployment_labels|kube_deployment_metadata_generation|kube_deployment_spec_paused|kube_deployment_spec_strategy_rollingupdate_max_surge|kube_deployment_spec_strategy_rollingupdate_max_unavailable|kube_deployment_status_observed_generation|kube_deployment_status_replicas|kube_deployment_status_replicas_unavailable|kube_deployment_status_replicas_ready|kube_deployment_status_replicas_updated'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'kube_replicaset_.*|kube_statefulset_.*'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'kube_daemonset_annotations|kube_daemonset_created|kube_daemonset_deletion_timestamp|kube_daemonset_labels|kube_daemonset_metadata_generation|kube_daemonset_status_current_number_scheduled|kube_daemonset_status_number_available|kube_daemonset_status_number_misscheduled|kube_daemonset_status_number_unavailable|kube_daemonset_status_observed_generation|kube_daemonset_status_updated_number_scheduled'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'kube_job_annotations|kube_job_info|kube_job_labels|kube_job_owner|kube_job_complete|kube_job_created|kube_job_spec_active_deadline_seconds|kube_job_spec_completions|kube_job_spec_parallelism|kube_job_status_succeeded|kube_job_status_failed|kube_job_status_suspended|kube_job_status_completion_time'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'kube_job_failed;(false|unknown)'
+    sourceLabels: [__name__, condition]
+  - action: drop
+    regex: 'kube_cronjob_annotations|kube_cronjob_created|kube_cronjob_info|kube_cronjob_labels|kube_cronjob_metadata_resource_version|kube_cronjob_next_schedule_time|kube_cronjob_spec_failed_job_history_limit|kube_cronjob_spec_starting_deadline_seconds|kube_cronjob_spec_successful_job_history_limit|kube_cronjob_spec_suspend|kube_cronjob_status_active'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'kube_service_.*|kube_endpoint_.*|kube_ingress_.*|kube_networkpolicy_.*|kube_secret_.*|kube_configmap_.*|kube_storageclass_.*|kube_lease_.*|kube_validatingwebhookconfiguration_.*|kube_mutatingwebhookconfiguration_.*'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'kube_persistentvolume_claim_ref|kube_persistentvolume_info|kube_persistentvolume_created'
+    sourceLabels: [__name__]

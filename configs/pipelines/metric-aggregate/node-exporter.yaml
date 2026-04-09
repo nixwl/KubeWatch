@@ -1,0 +1,135 @@
+# Extracted from: additionalPrometheusRulesMap.node-exporter-aggregates
+# Source: ../prometheus_stack-install/monitor-kube-prometheus-stack-values.yaml
+groups:
+  - name: vmstat-aggregate
+    rules:
+      - record: node_exporter:node_vmstat_pgfault_rate_5m
+        expr: rate(node_vmstat_pgfault[5m])
+      - record: node_exporter:node_vmstat_pgmajfault_rate_5m
+        expr: rate(node_vmstat_pgmajfault[5m])
+      - record: node_exporter:node_vmstat_majfault_ratio_5m
+        expr: rate(node_vmstat_pgmajfault[5m]) / clamp_min(rate(node_vmstat_pgfault[5m]), 1e-6) and on(cluster, instance) (rate(node_vmstat_pgfault[5m]) > 0)
+  - name: stat-aggregate
+    rules:
+      - record: node_exporter:node_procs_blocked:avg_5m
+        expr: avg_over_time(node_procs_blocked{job="node-exporter"}[5m])
+      - record: node_exporter:node_context_switches_per_second:rate_5m
+        expr: rate(node_context_switches_total{job="node-exporter"}[5m])
+  - name: softnet-aggregate
+    rules:
+      - record: node_exporter:node_softnet_processed_rate_5m
+        expr: sum without (cpu) (rate(node_softnet_processed_total{job="node-exporter"}[5m]))
+      - record: node_exporter:node_softnet_drop_ratio_5m
+        expr: sum without (cpu) (rate(node_softnet_dropped_total{job="node-exporter"}[5m])) / clamp_min(sum without (cpu) (rate(node_softnet_dropped_total{job="node-exporter"}[5m])) + sum without (cpu) (rate(node_softnet_processed_total{job="node-exporter"}[5m])), 1e-6)
+      - record: node_exporter:node_softnet_squeezed_ratio_5m
+        expr: sum without (cpu) (rate(node_softnet_times_squeezed_total{job="node-exporter"}[5m])) / clamp_min(sum without (cpu) (rate(node_softnet_processed_total{job="node-exporter"}[5m])) + sum without (cpu) (rate(node_softnet_dropped_total{job="node-exporter"}[5m])), 1e-6)
+      - record: node_exporter:node_softnet_backlog_delay_seconds_5m
+        expr: max_over_time((sum without (cpu) (node_softnet_backlog_len{job="node-exporter"}))[5m:]) / clamp_min(sum without (cpu) (rate(node_softnet_processed_total{job="node-exporter"}[5m])), 1e-6)
+  - name: schedstat-aggregate
+    rules:
+      - record: node_exporter:node_sched_wait_share_5m
+        expr:  sum without (cpu) (rate(node_schedstat_waiting_seconds_total{job="node-exporter"}[5m])) / clamp_min(sum without (cpu) (rate(node_schedstat_waiting_seconds_total{job="node-exporter"}[5m])) + sum without (cpu) (rate(node_schedstat_running_seconds_total{job="node-exporter"}[5m])), 1e-6)
+  - name: pressure-aggregate
+    rules:
+      - record: node_exporter:node_pressure_cpu_wait_ratio_5m
+        expr: rate(node_pressure_cpu_waiting_seconds_total[5m])
+      - record: node_exporter:node_pressure_io_wait_ratio_5m
+        expr: rate(node_pressure_io_waiting_seconds_total[5m])
+      - record: node_exporter:node_pressure_mem_wait_ratio_5m
+        expr: rate(node_pressure_memory_waiting_seconds_total[5m])
+  - name: netstat-aggregate
+    rules:
+      - record: node_exporter:node_net_tcp_conn_estab:avg5m
+        expr: avg_over_time(node_netstat_Tcp_CurrEstab[5m])
+      - record: node_exporter:node_net_tcp_retrans_timeout:rate5m
+        expr: sum by (cluster, instance, job) (rate(node_netstat_Tcp_RetransSegs[5m]) + rate(node_netstat_TcpExt_TCPTimeouts[5m]))
+      - record: node_exporter:node_net_tcp_listen_drops:rate5m
+        expr:  sum by (cluster, instance, job) (rate(node_netstat_TcpExt_ListenDrops[5m]))
+      - record: node_exporter:node_net_udp_error_events:rate5m
+        expr: sum by (cluster, instance, job) (rate(node_netstat_Udp_InErrors[5m]) + rate(node_netstat_Udp_RcvbufErrors[5m]))
+  - name: netdev-aggregate
+    rules:
+      - record: node_exporter:node_net_rx_bytes_ens33:rate5m
+        expr: sum by (cluster, instance, job) (rate(node_network_receive_bytes_total{device="ens33"}[5m]))
+      - record: node_exporter:node_net_tx_bytes_ens33:rate5m
+        expr: sum by (cluster, instance, job) (rate(node_network_transmit_bytes_total{device="ens33"}[5m]))
+      - record: node_exporter:node_net_rx_pps_ens33:rate5m
+        expr: sum by (cluster, instance, job) (rate(node_network_receive_packets_total{device="ens33"}[5m]))
+      - record: node_exporter:node_net_tx_pps_ens33:rate5m
+        expr: sum by (cluster, instance, job) (rate(node_network_transmit_packets_total{device="ens33"}[5m]))
+      - record: node_exporter:node_net_rx_loss_error_ratio_ens33:rate5m
+        expr: (sum by (cluster, instance, job) (rate(node_network_receive_drop_total{device="ens33"}[5m]) + rate(node_network_receive_errs_total{device="ens33"}[5m]))) / (sum by (cluster, instance, job) (rate(node_network_receive_packets_total{device="ens33"}[5m])) + 1e-6)
+      - record: node_exporter:node_net_tx_loss_error_ratio_ens33:rate5m
+        expr: (sum by (cluster, instance, job) (rate(node_network_transmit_drop_total{device="ens33"}[5m]) + rate(node_network_transmit_errs_total{device="ens33"}[5m]))) / (sum by (cluster, instance, job) (rate(node_network_transmit_packets_total{device="ens33"}[5m])) + 1e-6)
+      - record: node_exporter:node_net_rx_drop_ratio_ens33:rate5m
+        expr: (sum by (cluster, instance, job) (rate(node_network_receive_drop_total{device="ens33"}[5m])) / sum by (cluster, instance, job) (rate(node_network_receive_packets_total{device="ens33"}[5m]) + 1e-6))
+      - record: node_exporter:node_net_tx_drop_ratio_ens33:rate5m
+        expr: (sum by (cluster, instance, job) (rate(node_network_transmit_drop_total{device="ens33"}[5m])) / sum by (cluster, instance, job) (rate(node_network_transmit_drop_total{device="ens33"}[5m]) + 1e-6))
+  - name: meminfo-aggregate
+    rules:
+      - record: node_exporter:node_mem_utilization_ratio
+        expr: 1 - ((node_memory_MemAvailable_bytes{job="node-exporter"} or (node_memory_Buffers_bytes{job="node-exporter"} + node_memory_Cached_bytes{job="node-exporter"} + node_memory_MemFree_bytes{job="node-exporter"} + node_memory_SReclaimable_bytes{job="node-exporter"} - node_memory_Shmem_bytes{job="node-exporter"})) / node_memory_MemTotal_bytes{job="node-exporter"})
+      - record: node_exporter:node_mem_headroom_ratio
+        expr: node_memory_MemAvailable_bytes / on(cluster, instance, job) clamp_min(node_memory_MemTotal_bytes, 1)
+      - record: node_exporter:node_mem_headroom_slope_bytes_per_sec_5m
+        expr: deriv(node_memory_MemAvailable_bytes[5m])
+      - record: node_exporter:node_mem_cache_ratio
+        expr: node_memory_Cached_bytes / on(cluster, instance, job) clamp_min(node_memory_MemTotal_bytes, 1)
+      - record: node_exporter:node_mem_anon_ratio
+        expr: node_memory_AnonPages_bytes / on(cluster, instance, job) clamp_min(node_memory_MemTotal_bytes, 1)
+      - record: node_exporter:node_mem_anon_hot_ratio
+        expr: node_memory_Active_anon_bytes  / on(cluster, instance, job) clamp_min((node_memory_Active_anon_bytes + node_memory_Inactive_anon_bytes), 1)
+      - record: node_exporter:node_mem_dirty_writeback_ratio
+        expr: (node_memory_Dirty_bytes + node_memory_Writeback_bytes) / on(cluster, instance, job) clamp_min(node_memory_MemTotal_bytes, 1)
+      - record: node_exporter:node_mem_kernel_hard_reclaim_ratio
+        expr: (node_memory_SUnreclaim_bytes+ node_memory_PageTables_bytes + node_memory_KernelStack_bytes + node_memory_Unevictable_bytes + node_memory_Mlocked_bytes) / on(cluster, instance, job) clamp_min(node_memory_MemTotal_bytes, 1)
+  - name: filesystem-aggregate
+    rules:
+      - record: node_exporter:node_filesystem_root:avail_ratio
+        expr: max without(device, fstype, mountpoint, device_error) (node_filesystem_avail_bytes{job="node-exporter",mountpoint="/"} ) / max without(device, fstype, mountpoint, device_error) (node_filesystem_size_bytes{job="node-exporter",mountpoint="/"})
+      - record: node_exporter:node_filesystem_root:inode_free_ratio
+        expr:  max without(device, fstype, mountpoint, device_error) (node_filesystem_files_free{job="node-exporter",mountpoint="/"} ) / max without(device, fstype, mountpoint, device_error) (node_filesystem_files{job="node-exporter",mountpoint="/"})
+      - record: node_exporter:node_filesystem_root:readonly
+        expr: max without(device, fstype, mountpoint, device_error) (node_filesystem_readonly{job="node-exporter",mountpoint="/"})
+      - record: node_exporter:node_filesystem_root:device_error
+        expr: max without(device, fstype, mountpoint, device_error) (node_filesystem_device_error{job="node-exporter",mountpoint="/"})
+  - name: filefd-aggreate
+    rules:
+      - record: node_exporter:node_filefd:utilization_ratio
+        expr: node_filefd_allocated / node_filefd_maximum
+      - record: node_exporter:node_filefd:allocated_delta_5m
+        expr: delta(node_filefd_allocated[5m])
+  - name: diskstats-aggreate
+    rules:
+      - record: node_exporter:node_disk:utilization_max_5m
+        expr: max by (cluster, instance) (rate(node_disk_io_time_seconds_total{device=~"^sd[a-z]+$"}[5m]))
+      - record: node_exporter:node_disk:queue_depth_max_5m
+        expr: max by (cluster, instance) (rate(node_disk_io_time_weighted_seconds_total{device=~"^sd[a-z]+$"}[5m]))
+      - record: node_exporter:node_disk:io_bps_total_5m
+        expr: sum by (cluster, instance) (rate(node_disk_read_bytes_total{device=~"^sd[a-z]+$"}[5m])) + sum by (cluster, instance) (rate(node_disk_written_bytes_total{device=~"^sd[a-z]+$"}[5m]))
+      - record: node_exporter:node_disk:io_iops_total_5m
+        expr: sum by (cluster, instance) (rate(node_disk_reads_completed_total{device=~"^sd[a-z]+$"}[5m])) + sum by (cluster, instance) (rate(node_disk_writes_completed_total{device=~"^sd[a-z]+$"}[5m]))
+      - record: node_exporter:node_disk:read_latency_avg_5m
+        expr: sum by (cluster, instance) (rate(node_disk_read_time_seconds_total{device=~"^sd[a-z]+$"}[5m])) / clamp_min(sum by (cluster, instance) (rate(node_disk_reads_completed_total{device=~"^sd[a-z]+$"}[5m])), 1)
+      - record: node_exporter:node_disk:write_latency_avg_5m
+        expr: sum by (cluster, instance) (rate(node_disk_write_time_seconds_total{device=~"^sd[a-z]+$"}[5m])) / clamp_min(sum by (cluster, instance) (rate(node_disk_writes_completed_total{device=~"^sd[a-z]+$"}[5m])), 1)
+  - name: cpu-aggreate
+    rules:
+      - record: node_exporter:node_cpu_util_ratio
+        expr: avg by (cluster, instance) (sum without (mode) (rate(node_cpu_seconds_total{job="node-exporter",mode!="idle",mode!="iowait",mode!="steal"}[5m])))
+      - record: node_exporter:node_cpu_mode_user_ratio
+        expr: sum by (cluster, instance) (rate(node_cpu_seconds_total{mode="user"}[5m])) / sum by (cluster, instance) (rate(node_cpu_seconds_total[5m]))
+      - record: node_exporter:node_cpu_mode_system_ratio
+        expr: sum by (cluster, instance) (rate(node_cpu_seconds_total{mode="system"}[5m])) / sum by (cluster, instance) (rate(node_cpu_seconds_total[5m]))
+      - record: node_exporter:node_cpu_mode_idle_ratio
+        expr: sum by (cluster, instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) / sum by (cluster, instance) (rate(node_cpu_seconds_total[5m]))
+      - record: node_exporter:node_cpu_mode_iowait_ratio
+        expr: sum by (cluster, instance) (rate(node_cpu_seconds_total{mode="iowait"}[5m])) / sum by (cluster, instance) (rate(node_cpu_seconds_total[5m]))
+      - record: node_exporter:node_cpu_mode_irq_ratio
+        expr: sum by (cluster, instance) (rate(node_cpu_seconds_total{mode="irq"}[5m])) / sum by (cluster, instance) (rate(node_cpu_seconds_total[5m]))
+      - record: node_exporter:node_cpu_mode_softirq_ratio
+        expr: sum by (cluster, instance) (rate(node_cpu_seconds_total{mode="softirq"}[5m])) / sum by (cluster, instance) (rate(node_cpu_seconds_total[5m]))
+      - record: node_exporter:node_cpu_mode_steal_ratio
+        expr: sum by (cluster, instance) (rate(node_cpu_seconds_total{mode="steal"}[5m])) / sum by (cluster, instance) (rate(node_cpu_seconds_total[5m]))
+      - record: node_exporter:node_cpu_mode_nice_ratio
+        expr: sum by (cluster, instance) (rate(node_cpu_seconds_total{mode="nice"}[5m])) / sum by (cluster, instance) (rate(node_cpu_seconds_total[5m]))

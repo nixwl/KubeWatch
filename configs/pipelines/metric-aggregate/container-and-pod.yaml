@@ -1,0 +1,51 @@
+# Extracted from: additionalPrometheusRulesMap.container-aggregates
+# Source: ../prometheus_stack-install/monitor-kube-prometheus-stack-values.yaml
+groups:
+  - name: pod-cpu
+    rules:
+      - record: kube:pod_cpu_cores:rate5m
+        expr:  sum by (cluster, namespace, pod, node) (rate(container_cpu_usage_seconds_total{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!="",container!="POD"}[5m]))
+      - record: kube:pod_cpu_cores:irate5m
+        expr: sum by (cluster, namespace, pod, node) (irate(container_cpu_usage_seconds_total{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!="",container!="POD"}[5m]))
+      - record: kube:pod_cpu_throttle_ratio:rate5m
+        expr: sum by (cluster, namespace, pod, node) (rate(container_cpu_cfs_throttled_periods_total{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!="",container!="POD"}[5m])) / clamp_min(sum by (cluster, namespace, pod, node) (rate(container_cpu_cfs_periods_total{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!="",container!="POD"}[5m])), 1)
+      - record: kube:pod_cpu:utilization:5m
+        expr: (sum by (cluster, namespace, pod) (rate(container_cpu_usage_seconds_total{job="kubelet", metrics_path="/metrics/cadvisor", namespace!="", pod!=""}[5m])) / clamp_min(sum by (cluster, namespace, pod) (kube_pod_container_resource_limits{job="kube-state-metrics", resource="cpu", unit="core", namespace!="", pod!=""}), 0.001))
+  - name: pod-memory
+    rules:
+      - record: kube:pod_mem_working_set_bytes
+        expr: sum by (cluster, namespace, pod, node) (container_memory_working_set_bytes{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!="",container!="POD"})
+      - record: kube:pod_mem_rss_bytes
+        expr: sum by (cluster, namespace, pod, node) (container_memory_rss{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!="",container!="POD"})
+      - record: kube:pod_mem_cache_bytes
+        expr: sum by (cluster, namespace, pod, node) (container_memory_cache{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!="",container!="POD"})
+      - record: kube:pod_mem_cache_ratio
+        expr: kube:pod_mem_cache_bytes / clamp_min(kube:pod_mem_working_set_bytes, 1)
+      - record: kube:pod_mem_working_set_slope_bytes_per_sec:deriv5m
+        expr: sum by (cluster, namespace, pod, node) (deriv(container_memory_working_set_bytes{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!="",container!="POD"}[5m]))
+      - record: kube:pod_oom_events:increase5m
+        expr: sum by (cluster, namespace, pod, node) (increase(container_oom_events_total{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!="",container!="POD"}[5m]))
+      - record: kube:pod_mem:utilization:5m
+        expr: (sum by (cluster, namespace, pod) (container_memory_working_set_bytes{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!=""}) / clamp_min(sum by (cluster, namespace, pod) (kube_pod_container_resource_limits{job="kube-state-metrics",resource="memory",unit="byte",namespace!="",pod!=""}), 1))
+  - name: pod-filesystem
+    rules:
+      - record: kube:pod_fs_read_bps:rate5m
+        expr: sum by (cluster, namespace, pod, node) (rate(container_fs_reads_bytes_total{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!=""}[5m]))
+      - record: kube:pod_fs_write_bps:rate5m
+        expr: sum by (cluster, namespace, pod, node) (rate(container_fs_writes_bytes_total{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!=""}[5m]))
+      - record: kube:pod_fs_bps:rate5m
+        expr: kube:pod_fs_read_bps:rate5m + kube:pod_fs_write_bps:rate5m
+      - record: kube:pod_fs_read_iops:rate5m
+        expr: sum by (cluster, namespace, pod, node) (rate(container_fs_reads_total{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!=""}[5m]))
+      - record: kube:pod_fs_write_iops:rate5m
+        expr: sum by (cluster, namespace, pod, node) (rate(container_fs_writes_total{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!=""}[5m]))
+  - name: pod-lifecycle
+    rules:
+      - record: kube:pod_processes
+        expr: sum by (cluster, namespace, pod, node) (container_processes{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!="",container!="POD"})
+      - record: kube:pod_threads
+        expr: sum by (cluster, namespace, pod, node) (container_threads{job="kubelet",metrics_path="/metrics/cadvisor",namespace!="",pod!="",container!="POD"})
+  - name: pod-healthy
+    rules:
+      - record: kube:kubelet_cadvisor_scrape_error
+        expr: max by (cluster, node, instance) (container_scrape_error{job="kubelet",metrics_path="/metrics/cadvisor"})

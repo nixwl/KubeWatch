@@ -1,0 +1,57 @@
+# Extracted from: additionalPrometheusRulesMap.kube-state-aggregates
+# Source: ../prometheus_stack-install/monitor-kube-prometheus-stack-values.yaml
+groups:
+  - name: node-aggregates
+    rules:
+      - record: kube_state:node:not_ready
+        expr: 1 - max by (cluster, node) (kube_node_status_condition{condition="Ready",status="true"})
+      - record: kube_state:node:memory_pressure
+        expr: max by (cluster, node) (kube_node_status_condition{condition="MemoryPressure",status="true"})
+      - record: kube_state:node:disk_pressure
+        expr: max by (cluster, node) (kube_node_status_condition{condition="DiskPressure",status="true"})
+      - record: kube_state:node:pid_pressure
+        expr: max by (cluster, node) (kube_node_status_condition{condition="PIDPressure",status="true"})
+      - record: kube_state:node:unschedulable
+        expr: max by (cluster, node) (kube_node_spec_unschedulable)
+      - record: kube_state:node:cpu_headroom_cores
+        expr: max by (cluster, node) (kube_node_status_allocatable{resource="cpu",unit="core"}) - (sum by (cluster, node) (kube_pod_container_resource_requests{resource="cpu",unit="core"}) or on (cluster, node) (0 * max by (cluster, node) (kube_node_status_allocatable{resource="cpu",unit="core"})))
+      - record: kube_state:node:mem_headroom_bytes
+        expr: max by (cluster, node) (kube_node_status_allocatable{resource="memory",unit="byte"}) - (sum by (cluster, node) (kube_pod_container_resource_requests{resource="memory",unit="byte"}) or on (cluster, node) (0 * max by (cluster, node) (kube_node_status_allocatable{resource="memory",unit="byte"})))
+  - name: pod-aggregates
+    rules:
+      - record: kube_state:pod:container_restarts:increase5m
+        expr: sum by (cluster) (increase(kube_pod_container_status_restarts_total[5m]))
+      - record: kube_state:pod:pod_not_ready:count
+        expr: sum by (cluster) (1 - kube_pod_status_ready{condition="true"})
+      - record: kube_state:pod:pods_with_waiting:count
+        expr: sum by (cluster) (max by (cluster, namespace, pod) (kube_pod_container_status_waiting) > 0)
+      - record: kube_state:pod:pod_ready:ratio
+        expr: avg by (cluster) (kube_pod_status_ready{condition="true"})
+  - name: deployment-aggregates
+    rules:
+      - record: kube_state:deployment:deploy_replicas_missing:sum
+        expr: sum by (cluster, namespace) (clamp_min(kube_deployment_spec_replicas - kube_deployment_status_replicas_available, 0))
+      - record: kube_state:deployment:deploy_availability:ratio
+        expr: sum by (cluster, namespace) (kube_deployment_status_replicas_available) / clamp_min(sum by (cluster, namespace) (kube_deployment_spec_replicas), 1)
+  - name: daemon-aggregates
+    rules:
+      - record: kube_state:daemonset:daemonset_ready_missing:sum
+        expr: sum by (cluster, namespace) (clamp_min(kube_daemonset_status_desired_number_scheduled - kube_daemonset_status_number_ready, 0))
+      - record: kube_state:daemonset:daemonset_ready:ratio
+        expr: sum by (cluster, namespace) (kube_daemonset_status_number_ready) / clamp_min(sum by (cluster, namespace) (kube_daemonset_status_desired_number_scheduled), 1)
+  - name: job-aggregates
+    rules:
+      - record: kube_state:job:jobs_failed:count
+        expr: sum by (cluster, namespace) (kube_job_failed{condition="true"})
+      - record: kube_state:job:jobs_running:count
+        expr: sum by (cluster, namespace) (kube_job_status_active > 0)
+      - record: kube_state:job:jobs_running_over_1h:count
+        expr: sum by (cluster, namespace) ((kube_job_status_active > 0) and ((time() - kube_job_status_start_time) > 3600))
+  - name: cronjob-aggregates
+    rules:
+      - record: kube_state:cronjob:cronjobs_no_success_over_24h
+        expr: sum by (cluster, namespace) ((time() - kube_cronjob_status_last_successful_time) > 86400)
+      - record: kube_state:cronjob:cronjobs_no_schedule_over_2h:count
+        expr: sum by (cluster, namespace) (((kube_cronjob_status_last_successful_time > bool 0) * ((time() - kube_cronjob_status_last_successful_time) > bool 86400)))
+      - record: kube_state:cronjob:cronjobs_active:count
+        expr: sum by (cluster, namespace) (kube_cronjob_status_active > 0)

@@ -1,0 +1,35 @@
+# Extracted from: additionalPrometheusRulesMap.kube-aggregates (kcm-aggregates)
+# Source: ../prometheus_stack-install/monitor-kube-prometheus-stack-values.yaml
+groups:
+  - name: kcm-aggregates
+    rules:
+      - record: kube:controller_manager:endpointslice:sync_failures:rate5m
+        expr: sum by (cluster) (rate(endpoint_slice_controller_syncs{result!="success"}[5m]))
+      - record: kube:controller_manager:endpointslice:slices_actual_to_desired:ratio5m
+        expr: (sum by (cluster) (avg_over_time(endpoint_slice_controller_num_endpoint_slices[5m]))) / clamp_min((sum by (cluster) (avg_over_time(endpoint_slice_controller_desired_endpoint_slices[5m]))), 1)
+      - record: kube:controller_manager:endpointslice_mirroring:slices_actual_to_desired:ratio5m
+        expr: (sum by (cluster) (avg_over_time(endpoint_slice_mirroring_controller_num_endpoint_slices[5m]))) / clamp_min((sum by (cluster) (avg_over_time(endpoint_slice_mirroring_controller_desired_endpoint_slices[5m]))), 1)
+      - record: kube:service_controller:nodesync_error:rate5m
+        expr: sum by (cluster) (rate(service_controller_nodesync_error_total[5m]))
+      - record: kube:node_authorizer:graph_actions_duration_seconds:avg5m
+        expr: sum by (cluster) (rate(node_authorizer_graph_actions_duration_seconds_sum[5m])) / clamp_min(sum by (cluster) (rate(node_authorizer_graph_actions_duration_seconds_count[5m])), 1e-9)
+      - record: kube:node_collector:evictions_total:rate5m
+        expr: sum by (cluster) (rate(node_collector_evictions_total[5m]))
+      - record: kube:node_collector:unhealthy_nodes:ratio
+        expr: sum by (cluster) (node_collector_unhealthy_nodes_in_zone) / clamp_min(sum by (cluster) (node_collector_zone_size), 1)
+      - record: kube:node_ipam:cidrset_usage_cidrs:remaining
+        expr: 1 - max by (cluster) (node_ipam_controller_cidrset_usage_cidrs)
+      - record: kube:storage:ephemeral_volume_controller:create_failures:ratio5m
+        expr: sum by (cluster) (rate(ephemeral_volume_controller_create_failures_total[5m])) / clamp_min(sum by (cluster) (rate(ephemeral_volume_controller_create_total[5m])), 1e-9)
+      - record: kube:cronjob_controller:job_creation_skew_seconds:avg5m
+        expr: sum by (cluster) (rate(cronjob_controller_job_creation_skew_duration_seconds_sum[5m])) / clamp_min(sum by (cluster) (rate(cronjob_controller_job_creation_skew_duration_seconds_count[5m])), 1e-9)
+      - record: kube:taint_eviction_controller:pod_deletions_total:rate5m
+        expr: sum by (cluster) (rate(taint_eviction_controller_pod_deletions_total[5m]))
+      - record: kube:garbagecollector:resources_sync_error_total:rate5m
+        expr: sum by (cluster) (rate(garbagecollector_controller_resources_sync_error_total[5m]))
+      - record: kube:root_ca_cert_publisher:sync_errors:ratio5m
+        expr: sum by (cluster) (rate(root_ca_cert_publisher_sync_total{code!="200"}[5m])) / clamp_min(sum by (cluster) (rate(root_ca_cert_publisher_sync_total[5m])), 1e-9)
+      - record: kube:controller_manager:running_managed_controllers:up
+        expr: min by (cluster, manager, name) (running_managed_controllers)
+      - record: kube:controller_manager:running_managed_controllers:count
+        expr: sum by (cluster, manager) (running_managed_controllers)

@@ -1,0 +1,145 @@
+﻿# Alert template built only from metrics recorded in monitor-kube-prometheus-stack-values.yaml (additionalPrometheusRulesMap).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kube-controller-manager-alerts
+  namespace: monitor
+  labels:
+    release: monitor
+    app.kubernetes.io/instance: monitor
+spec:
+  groups:
+    - name: kube-controller-manager-alerts
+      rules:
+        - alert: KubeControllerManagerEndpointSliceSyncFailures
+          expr: |
+            kube:controller_manager:endpointslice:sync_failures:rate5m > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_controller_manager
+            anomaly_type: kcm_endpointslice_sync_failures
+          annotations:
+            summary: "kube-controller-manager EndpointSlice sync failures continue"
+            description: "EndpointSlice sync failures keep occurring over 10 minutes."
+        - alert: KubeControllerManagerEndpointSliceDriftHigh
+          expr: |
+            abs(kube:controller_manager:endpointslice:slices_actual_to_desired:ratio5m - 1) > 0.2
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_controller_manager
+            anomaly_type: kcm_endpointslice_ratio_drift
+          annotations:
+            summary: "kube-controller-manager EndpointSlice actual-to-desired ratio drifts"
+            description: "The EndpointSlice actual-to-desired ratio deviates from 1 by more than 20% for 10 minutes."
+        - alert: KubeControllerManagerEndpointSliceMirroringDriftHigh
+          expr: |
+            abs(kube:controller_manager:endpointslice_mirroring:slices_actual_to_desired:ratio5m - 1) > 0.2
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_controller_manager
+            anomaly_type: kcm_endpointslice_mirroring_ratio_drift
+          annotations:
+            summary: "kube-controller-manager mirrored EndpointSlice ratio drifts"
+            description: "The mirrored EndpointSlice actual-to-desired ratio deviates from 1 by more than 20% for 10 minutes."
+        - alert: KubeControllerManagerServiceNodeSyncErrors
+          expr: |
+            kube:service_controller:nodesync_error:rate5m > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_controller_manager
+            anomaly_type: kcm_service_nodesync_errors
+          annotations:
+            summary: "kube-controller-manager service node-sync errors occur"
+            description: "The service controller keeps reporting node-sync errors over 10 minutes."
+        - alert: KubeControllerManagerUnhealthyNodesRatioHigh
+          expr: |
+            kube:node_collector:unhealthy_nodes:ratio > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_controller_manager
+            anomaly_type: kcm_unhealthy_nodes_ratio_high
+          annotations:
+            summary: "kube-controller-manager sees too many unhealthy nodes"
+            description: "More than 5% of nodes are unhealthy for 10 minutes."
+        - alert: KubeControllerManagerCIDRRemainingLow
+          expr: |
+            kube:node_ipam:cidrset_usage_cidrs:remaining < 0.1
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_controller_manager
+            anomaly_type: kcm_cidr_remaining_low
+          annotations:
+            summary: "kube-controller-manager CIDR headroom is low"
+            description: "Remaining NodeIPAM CIDR capacity falls below 10% for 10 minutes."
+        - alert: KubeControllerManagerEphemeralVolumeCreateFailuresHigh
+          expr: |
+            kube:storage:ephemeral_volume_controller:create_failures:ratio5m > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_controller_manager
+            anomaly_type: kcm_ephemeral_volume_create_failures
+          annotations:
+            summary: "kube-controller-manager ephemeral volume create failure ratio is high"
+            description: "Ephemeral volume creation failures stay above 5% for 10 minutes."
+        - alert: KubeControllerManagerCronJobCreationSkewHigh
+          expr: |
+            kube:cronjob_controller:job_creation_skew_seconds:avg5m > 60
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_controller_manager
+            anomaly_type: kcm_cronjob_creation_skew_high
+          annotations:
+            summary: "kube-controller-manager CronJob creation skew is high"
+            description: "Average CronJob creation skew stays above 60 seconds for 10 minutes."
+        - alert: KubeControllerManagerTaintEvictionsHigh
+          expr: |
+            kube:taint_eviction_controller:pod_deletions_total:rate5m > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_controller_manager
+            anomaly_type: kcm_taint_evictions_high
+          annotations:
+            summary: "kube-controller-manager taint evictions are happening"
+            description: "The taint eviction controller keeps deleting pods over 10 minutes."
+        - alert: KubeControllerManagerGarbageCollectorSyncErrors
+          expr: |
+            kube:garbagecollector:resources_sync_error_total:rate5m > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_controller_manager
+            anomaly_type: kcm_gc_sync_errors
+          annotations:
+            summary: "kube-controller-manager garbage collector reports sync errors"
+            description: "Garbage-collector resource sync errors keep occurring for 10 minutes."
+        - alert: KubeControllerManagerRootCASyncErrorsHigh
+          expr: |
+            kube:root_ca_cert_publisher:sync_errors:ratio5m > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_controller_manager
+            anomaly_type: kcm_root_ca_sync_errors
+          annotations:
+            summary: "kube-controller-manager root CA sync error ratio is high"
+            description: "Root CA publisher sync errors stay above 5% for 10 minutes."
+        - alert: KubeControllerManagerManagedControllerDown
+          expr: |
+            kube:controller_manager:running_managed_controllers:up == 0
+          for: 10m
+          labels:
+            severity: critical
+            category: kube_controller_manager
+            anomaly_type: kcm_managed_controller_down
+          annotations:
+            summary: "A managed kube-controller-manager controller is not running"
+            description: "At least one managed controller reports down status for 10 minutes."

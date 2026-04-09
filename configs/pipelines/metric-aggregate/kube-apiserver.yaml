@@ -1,0 +1,65 @@
+# Extracted from: additionalPrometheusRulesMap.kube-aggregates (apiservice-aggregates, apiserver-aggregates)
+# Source: ../prometheus_stack-install/monitor-kube-prometheus-stack-values.yaml
+groups:
+  - name: apiservice-aggregates
+    rules:
+      - record: kube:apiservice:unavailable:max
+        expr: max by (cluster) (aggregator_unavailable_apiservice)
+  - name: apiserver-aggregates
+    rules:
+      - record: kube:apiserver:admission_controller:admission:rate5m
+        expr: sum by (cluster, type) (rate(apiserver_admission_controller_admission_duration_seconds_count[5m]))
+      - record: kube:apiserver:admission_controller:rejected:ratio5m
+        expr: sum by (cluster, type) (rate(apiserver_admission_controller_admission_duration_seconds_count{rejected="true"}[5m])) / clamp_min(sum by (cluster, type) (rate(apiserver_admission_controller_admission_duration_seconds_count[5m])), 1e-9)
+      - record: kube:apiserver:admission_controller:admission_webhook_error_ratio:ratio5m
+        expr: sum by (cluster, type) (rate(apiserver_admission_webhook_request_total{code!~"2.."}[5m])) / clamp_min(sum by (cluster, operation, type) (rate(apiserver_admission_webhook_request_total[5m])), 1e-9)
+      - record: kube:apiserver:authentication:attempts_fail_ratio:ratio5m
+        expr: sum by (cluster) (rate(authentication_attempts{result="failure"}[5m])) / clamp_min(sum by (cluster) (rate(authentication_attempts{result="failure"}[5m]) + rate(authentication_attempts{result="success"}[5m])), 1e-9)
+      - record: kube:apiserver:serviceaccount:tokenrequest_stale_tokens:rate5m
+        expr: sum by (cluster) (rate(serviceaccount_stale_tokens_total[5m]))
+      - record: kube:apiserver:requests:inflight:max5m
+        expr: sum by (cluster) (max_over_time(apiserver_current_inflight_requests[5m]))
+      - record: kube:apiserver:requests:inqueue:max5m
+        expr: sum by (cluster) (max_over_time(apiserver_current_inqueue_requests[5m]))
+      - record: kube:apiserver:requests:qps:rate5m
+        expr: sum by (cluster) (rate(apiserver_request_total{subresource!~"/(healthz|livez|readyz)"}[5m]))
+      - record: kube:apiserver:requests:server_error_ratio:ratio5m
+        expr: sum by (cluster) (rate(apiserver_request_total{code=~"5..",subresource!~"/(healthz|livez|readyz)"}[5m])) / clamp_min(sum by (cluster) (rate(apiserver_request_total{subresource!~"/(healthz|livez|readyz)"}[5m])), 1e-6)
+      - record: kube:apiserver:requests:sli_duration:avg5m
+        expr: sum by (cluster) (rate(apiserver_request_sli_duration_seconds_sum{subresource!~"/(healthz|livez|readyz)"}[5m])) / clamp_min(sum by (cluster) (rate(apiserver_request_sli_duration_seconds_count{subresource!~"/(healthz|livez|readyz)"}[5m])), 1e-6)
+      - record: kube:apiserver:requests:duration:avg5m
+        expr: sum by (cluster) (rate(apiserver_request_duration_seconds_sum{subresource!~"/(healthz|livez|readyz)"}[5m])) / clamp_min(sum by (cluster) (rate(apiserver_request_duration_seconds_count{subresource!~"/(healthz|livez|readyz)"}[5m])), 1e-6)
+      - record: kube:apiserver:apf:executing_seats:max5m
+        expr: sum by (cluster) (max_over_time(apiserver_flowcontrol_current_executing_seats[5m]))
+      - record: kube:apiserver:apf:inqueue_seats:max5m
+        expr: sum by (cluster) (max_over_time(apiserver_flowcontrol_current_inqueue_seats[5m]))
+      - record: kube:apiserver:apf:current_limit_seats:sum_max5m
+        expr:  sum by (cluster) (max_over_time(apiserver_flowcontrol_current_limit_seats[5m]))
+      - record: kube:apiserver:apf:seat_utilization:avg5m
+        expr: sum by (cluster) (rate(apiserver_flowcontrol_priority_level_seat_utilization_sum{phase="executing"}[5m])) / clamp_min(sum by (cluster) (rate(apiserver_flowcontrol_priority_level_seat_utilization_count{phase="executing"}[5m])), 1e-6)
+      - record: kube:apiserver:apf:dispatched_requests:rate5m
+        expr: sum by (cluster) (rate(apiserver_flowcontrol_dispatched_requests_total[5m]))
+      - record: kube:apiserver:apf:concurrency_in_use:max5m
+        expr: sum by (cluster) (max_over_time(apiserver_flowcontrol_request_concurrency_in_use[5m]))
+      - record: kube:apiserver:storage:list:qps:rate5m
+        expr: sum by (cluster) (rate(apiserver_storage_list_total[5m]))
+      - record: kube:apiserver:storage:etcd_size_bytes
+        expr: sum by (cluster) (apiserver_storage_size_bytes)
+      - record: kube:apiserver:watchcache:initializations:rate5m
+        expr: sum by (cluster) (rate(apiserver_watch_cache_initializations_total[5m]))
+      - record: kube:apiserver:watchcache:consistent_read_fallback_ratio:ratio5m
+        expr: sum by (cluster) (rate(apiserver_watch_cache_consistent_read_total{fallback="true"}[5m])) / clamp_min(sum by (cluster) (rate(apiserver_watch_cache_consistent_read_total[5m])), 1e-6)
+      - record: kube:apiserver:cache_list:qps:rate5m
+        expr: sum by (cluster) (rate(apiserver_cache_list_total[5m]))
+      - record: kube:apiserver:authn:token_cache:miss_ratio:ratio5m
+        expr: sum by (cluster) (rate(authentication_token_cache_request_total{status="miss"}[5m])) / clamp_min(sum by (cluster) (rate(authentication_token_cache_request_total[5m])), 1e-6)
+      - record: kube:apiserver:authn:token_cache:active_fetch:max5m
+        expr: max by (cluster) (max_over_time(authentication_token_cache_active_fetch_count[5m]))
+      - record: kube:apiserver:audit:events:rate5m
+        expr: sum by (cluster) (rate(apiserver_audit_event_total[5m]))
+      - record: kube:apiserver:audit:requests_rejected:rate5m
+        expr: sum by (cluster) (rate(apiserver_audit_requests_rejected_total[5m]))
+      - record: kube:apiserver:service_repair:reconcile_errors:rate5m
+        expr: sum by (cluster) (rate(apiserver_clusterip_repair_reconcile_errors_total[5m]) + rate(apiserver_nodeport_repair_reconcile_errors_total[5m]))
+      - record: kube:apiserver:watchcache:init_events:rate5m
+        expr: sum by (cluster) (rate(apiserver_init_events_total[5m]))

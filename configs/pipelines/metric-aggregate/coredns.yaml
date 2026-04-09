@@ -1,0 +1,45 @@
+# Extracted from: additionalPrometheusRulesMap.coredns-aggregates
+# Source: ../prometheus_stack-install/monitor-kube-prometheus-stack-values.yaml
+groups:
+  - name: coredns-cache
+    rules:
+      - record: coredns:cache:req_rate5m
+        expr: sum by (cluster, instance) (rate(coredns_cache_requests_total[5m]))
+      - record: coredns:cache:hit_ratio5m
+        expr: sum by (cluster, instance) (rate(coredns_cache_hits_total[5m])) / clamp_min(sum by (cluster, instance) (rate(coredns_cache_hits_total[5m])) + sum by (cluster, instance) (rate(coredns_cache_misses_total[5m])),1e-6)
+      - record: coredns:cache:entries
+        expr: sum by (cluster, instance, server) (coredns_cache_entries)
+      - record: coredns:cache:counter_resets5m
+        expr: sum by (cluster, instance, server) (resets(coredns_cache_requests_total[5m])) + sum by (cluster, instance, server) (resets(coredns_cache_hits_total[5m]))
+  - name: coredns-request
+    rules:
+      - record: coredns:dns:req_rate5m
+        expr: sum by (cluster, instance, server, proto) (rate(coredns_dns_requests_total[5m]))
+      - record: coredns:dns:rcode_error_ratio5m
+        expr: sum by (cluster, instance, server) (rate(coredns_dns_responses_total{rcode!="NOERROR", rcode!="NXDOMAIN"}[5m])) / clamp_min(sum by (cluster, instance, server) (rate(coredns_dns_responses_total[5m])), 1)
+      - record: coredns:dns:latency_avg_5m
+        expr: sum by (cluster, instance, server, zone) (rate(coredns_dns_request_duration_seconds_sum[5m])) / clamp_min(sum by (cluster, instance, server, zone) (rate(coredns_dns_request_duration_seconds_count[5m])), 1)
+  - name: coredns-forward
+    rules:
+      - record: coredns:forward:healthcheck_broken_rate5m
+        expr: sum by (cluster, instance) (rate(coredns_forward_healthcheck_broken_total[5m]))
+      - record: coredns:forward:max_concurrent_rejects_rate5m
+        expr: sum by (cluster, instance) (rate(coredns_forward_max_concurrent_rejects_total[5m]))
+      - record: coredns:forward:upstream_latency_avg_5m
+        expr: sum by (cluster, instance, proxy_name, to) (rate(coredns_proxy_request_duration_seconds_sum[5m])) / clamp_min(sum by (cluster, instance, proxy_name, to) (rate(coredns_proxy_request_duration_seconds_count[5m])), 1)
+  - name: coredns-healthy
+    rules:
+      - record: coredns:health:fail_rate5m
+        expr: sum by (cluster, instance) (rate(coredns_health_request_failures_total[5m]))
+  - name: coredns-kube-plugins
+    rules:
+      - record: coredns:k3s:apiserver_error_ratio5m
+        expr: (sum by (cluster, instance) (rate(coredns_kubernetes_rest_client_requests_total{job="coredns"}[5m])) - sum by (cluster, instance) (rate(coredns_kubernetes_rest_client_requests_total{job="coredns", code=~"2.."}[5m]))) / clamp_min(sum by (cluster, instance) (rate(coredns_kubernetes_rest_client_requests_total{job="coredns"}[5m])),1)
+      - record: coredns:k3s:apiserver_latency_avg5m
+        expr: sum by (cluster, instance) (rate(coredns_kubernetes_rest_client_request_duration_seconds_sum[5m])) / clamp_min(sum by (cluster, instance) (rate(coredns_kubernetes_rest_client_request_duration_seconds_count[5m])), 1)
+      - record: coredns:k3s:apiserver_rate_limiter_wait_avg5m
+        expr: sum by (cluster, instance) (rate(coredns_kubernetes_rest_client_rate_limiter_duration_seconds_sum[5m])) / clamp_min(sum by (cluster, instance) (rate(coredns_kubernetes_rest_client_rate_limiter_duration_seconds_count[5m])), 1)
+  - name: coredns-error-panic
+    rules:
+      - record: coredns:critical_events:rate5m
+        expr: sum by (cluster) (rate(coredns_reload_failed_total[5m]) + rate(coredns_panics_total[5m]))

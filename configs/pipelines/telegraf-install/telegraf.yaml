@@ -1,0 +1,130 @@
+affinity: {}
+args: []
+config:
+  agent:
+    collection_jitter: 1s
+    debug: false
+    flush_interval: 10s
+    flush_jitter: 1s
+    hostname: $HOSTNAME
+    interval: 10s
+    logfile: ""
+    metric_batch_size: 5000
+    metric_buffer_limit: 20000
+    omit_hostname: true
+    precision: ""
+    quiet: false
+    round_interval: true
+  inputs:
+    - internal: {}
+    - http_listener_v2:
+        service_address: ":1234"
+        paths:
+          - "/receive"
+        data_format: "prometheusremotewrite"
+  outputs:
+    - prometheus_client:
+        listen: ":8889"
+        path: "/metrics"
+        expiration_interval: "10s"
+        namepass:
+          - internal_agent
+          - internal_write
+        fieldinclude:
+          - gather_errors
+          - gather_timeouts
+          - errors
+          - startup_errors
+          - metrics_dropped
+        collectors_exclude: ["gocollector", "process"]
+
+    - influxdb_v2:
+        urls:
+          - "http://192.168.52.8:8086"
+        token: "$INFLUX_TOKEN"
+        organization: "data-center"
+        bucket: "monitor"
+        tagpass:
+          cluster:
+            - "monitor"
+    - influxdb_v2:
+        urls:
+          - "http://192.168.52.8:8086"
+        token: "$INFLUX_TOKEN"
+        organization: "data-center"
+        bucket: "producer"
+        tagpass:
+          cluster:
+            - "producer"
+  processors:
+    - enum:
+        mapping:
+          dest: status_code
+          field: status
+          value_mappings:
+            critical: 3
+            healthy: 1
+            problem: 2
+env:
+  - name: HOSTNAME
+    value: telegraf-polling-service
+  - name: INFLUX_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: remoterw-token
+        key: INFLUX_TOKEN
+global:
+  cattle:
+    clusterId: local
+    clusterName: local
+    rkePathPrefix: ""
+    rkeWindowsPathPrefix: ""
+    systemProjectId: p-7zh5f
+    url: https://rancher.example.com
+image:
+  pullPolicy: IfNotPresent
+  repo: docker.io/library/telegraf
+  tag: 1.36-alpine
+imagePullSecrets: []
+initContainers: []
+metrics:
+  health:
+    enabled: false
+    service_address: "http://:8888"
+    threshold: 5000
+  internal:
+    enabled: true
+    service_address: "http://:8889"
+    collect_memstats: false
+nodeSelector:
+  node-role: worker
+pdb:
+  create: true
+  minAvailable: 1
+podAnnotations: {}
+podLabels: {}
+rbac:
+  clusterWide: false
+  create: true
+  rules: []
+replicaCount: 2
+resources: {}
+service:
+  annotations: {}
+  enabled: true
+  type: ClusterIP
+  ports:
+    - name: remote-write
+      port: 1234
+      targetPort: 1234
+      protocol: TCP
+    - name: telegraf-metrics
+      port: 8889
+      targetPort: 8889
+      protocol: TCP
+serviceAccount:
+  annotations: {}
+  create: true
+  name: null
+tolerations: []
+updateStrategy: {}

@@ -1,0 +1,592 @@
+# Normalized from TEMP node-exporter alert fragments.
+# Sources: TEMP/1_K3S Prometheus Alerts Con.yaml, TEMP/2_K3S Prometheus Alerts Con.yaml, TEMP/13_K3S Prometheus Alerts Con.yaml, TEMP/6_K3S Prometheus Alerts Con.yaml, TEMP/10_K3S Prometheus Alerts Con.yaml, TEMP/5_K3S Prometheus Alerts Con.yaml, TEMP/7_K3S Prometheus Alerts Con.yaml, TEMP/8_K3S Prometheus Alerts Con.yaml, TEMP/K3S Prometheus Alerts Con.yaml, TEMP/4_K3S Prometheus Alerts Con.yaml, TEMP/12_K3S Prometheus Alerts Con.yaml, TEMP/3_K3S Prometheus Alerts Con.yaml, TEMP/9_K3S Prometheus Alerts Con.yaml, TEMP/11_K3S Prometheus Alerts Con.yaml
+# Note: node-load-alerts depends on raw node_load1/node_load15, which are not retained by configs/pipelines/metric-drop/node-exporter.yaml.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: node-exporter-alerts
+  namespace: monitor
+  labels:
+    release: monitor
+    app.kubernetes.io/instance: monitor
+spec:
+  groups:
+    - name: node-timesync-alerts
+      rules:
+        - alert: NodeClockNotSynchronized
+          expr: |
+            node_timex_sync_status == 0
+          for: 5m
+          labels:
+            severity: critical
+            category: node-time
+            anomaly_type: node-time-unsync
+          annotations:
+            summary: "Node clock not synchronized"
+            description: "Clock is NOT synchronized for 5m (cluster={{ $labels.cluster }}, instance={{ $labels.instance }}). Check chrony/ntpd/ptp, upstream reachability, DNS."
+        - alert: NodeClockOffsetTooHigh
+          expr: |
+            (abs(node_timex_offset_seconds) > 0.5) and (node_timex_sync_status == 1)
+          for: 5m
+          labels:
+            severity: warning
+            category: node-time
+            anomaly_type: node-time-offset
+          annotations:
+            summary: "Node clock offset too high (>0.5s)"
+            description: "Clock offset is {{ $value }}s for 5m while sync_status=1 (cluster={{ $labels.cluster }}, instance={{ $labels.instance }}). Investigate NTP/chrony jitter, time source quality."
+    - name: node-vmstat-alerts
+      rules:
+        - alert: NodeMajorPageFaultRateHigh
+          expr: |
+            node_exporter:node_vmstat_pgmajfault_rate_5m > 5
+          for: 5m
+          labels:
+            severity: warning
+            category: node-v-memory
+            anomaly_type: node-vm-pagefault
+          annotations:
+            summary: "Major page fault rate is high"
+            description: "Major page fault rate is {{ $value }} /s for 5m (cluster={{ $labels.cluster }}, instance={{ $labels.instance }}, job={{ $labels.job }}). This may indicate memory pressure / disk-backed paging."
+        - alert: NodeMajorPageFaultThrashing
+          expr: |
+            (
+              max by (cluster, job, instance) (node_exporter:node_vmstat_pgmajfault_rate_5m)
+              *
+              (
+                (
+                  max by (cluster, job, instance) (node_exporter:node_vmstat_pgmajfault_rate_5m)
+                  /
+                  clamp_min(max by (cluster, job, instance) (node_exporter:node_vmstat_pgfault_rate_5m), 1e-6)
+                ) > bool 0.2
+              )
+              *
+              (max by (cluster, job, instance) (node_exporter:node_vmstat_pgfault_rate_5m) > bool 200)
+            ) > 20
+          for: 5m
+          labels:
+            severity: critical
+            category: node-v-memory
+            anomaly_type: node-vm-pagetrash
+          annotations:
+            summary: "Major page fault thrashing suspected"
+            description: "Major page fault rate is {{ $value }} /s for 5m with high major-fault ratio and non-trivial total faults (cluster={{ $labels.cluster }}, instance={{ $labels.instance }}, job={{ $labels.job }}). Likely memory pressure / I/O stall / thrash."
+    - name: node-stat-alerts
+      rules:
+        - alert: NodeIOBlockedPressureHigh
+          expr: |
+            (
+              node_exporter:node_procs_blocked:avg_5m > 1
+            )
+            and
+            (
+              node_exporter:node_procs_blocked:avg_5m
+              >
+              avg_over_time(node_exporter:node_procs_blocked:avg_5m[6h])
+              + 4 * clamp_min(stddev_over_time(node_exporter:node_procs_blocked:avg_5m[6h]), 0.5)
+            )
+          for: 5m
+          labels:
+            severity: warning
+            category: node-stat
+            anomaly_type: node-stat-ioblock
+          annotations:
+            summary: "I/O blocked pressure anomaly ({{ $labels.instance }})"
+            description: "procs_blocked(avg_5m)={{ $value }}; exceeds 6h baseline + 4σ."
+        - alert: NodeSchedulerPressureHigh
+          expr: |
+            (
+              node_exporter:node_context_switches_per_second:rate_5m > 2000
+            )
+            and
+            (
+              node_exporter:node_context_switches_per_second:rate_5m
+              >
+              avg_over_time(node_exporter:node_context_switches_per_second:rate_5m[6h])
+              + 4 * clamp_min(stddev_over_time(node_exporter:node_context_switches_per_second:rate_5m[6h]), 200)
+            )
+            and
+            (
+              resets(node_context_switches_total[15m]) == 0
+            )
+          for: 5m
+          labels:
+            severity: warning
+            category: node-stat
+            anomaly_type: node-stat-schedulerpressure
+          annotations:
+            summary: "Scheduler / context-switch pressure anomaly ({{ $labels.instance }})"
+            description: "ctxsw(rate_5m)={{ $value }}; exceeds 6h baseline + 4σ."
+    - name: node-softnet-alerts
+      rules:
+        - alert: NodeSoftnetSqueezedHigh
+          expr: |
+            (
+              (node_exporter:node_softnet_processed_rate_5m > 300 and node_exporter:node_softnet_squeezed_ratio_5m > 0.001)
+              or
+              (node_exporter:node_softnet_processed_rate_5m > 50 and node_exporter:node_softnet_squeezed_ratio_5m > 0.01)
+            )
+          for: 5m
+          labels:
+            severity: warning
+            category: node_softnet
+            anomaly_type: node-softnet-squeeze
+          annotations:
+            summary: "Softnet budget pressure high ({{ $labels.instance }})"
+            description: "squeezed_ratio_5m={{ $value }} (tiered thresholds by processed_rate_5m)."
+        - alert: NodeSoftnetBacklogDelayHigh
+          expr: |
+            (
+              (node_exporter:node_softnet_processed_rate_5m > 300 and node_exporter:node_softnet_backlog_delay_seconds_5m > 0.01)
+              or
+              (node_exporter:node_softnet_processed_rate_5m > 50 and node_exporter:node_softnet_backlog_delay_seconds_5m > 0.05)
+            )
+          for: 5m
+          labels:
+            severity: warning
+            category: node_softnet
+            anomaly_type: node-softnet-backlogdelay
+          annotations:
+            summary: "Softnet backlog delay high ({{ $labels.instance }})"
+            description: "backlog_delay_seconds_5m={{ $value }} (tiered thresholds by processed_rate_5m)."
+        - alert: NodeSoftnetDropRatioHigh
+          expr: |
+            (
+              (node_exporter:node_softnet_processed_rate_5m > 300 and node_exporter:node_softnet_drop_ratio_5m > 0.0001)
+              or
+              (node_exporter:node_softnet_processed_rate_5m > 50 and node_exporter:node_softnet_drop_ratio_5m > 0.001)
+            )
+          for: 5m
+          labels:
+            severity: critical
+            category: node_softnet
+            anomaly_type: node-softnet-drop
+          annotations:
+            summary: "Softnet packet drop detected ({{ $labels.instance }})"
+            description: "drop_ratio_5m={{ $value }} (tiered thresholds by processed_rate_5m)."
+    - name: node-schedstat-alerts
+      rules:
+        - alert: NodeSchedWaitShareAnomaly
+          expr: |
+            (node_exporter:node_sched_wait_share_5m > 0.35)
+            and
+            (
+              node_exporter:node_sched_wait_share_5m
+              >
+              avg_over_time(node_exporter:node_sched_wait_share_5m[6h])
+              + 4 * clamp_min(stddev_over_time(node_exporter:node_sched_wait_share_5m[6h]), 0.02)
+            )
+            and
+            (
+              sum without (cpu) (rate(node_schedstat_waiting_seconds_total[5m]))
+              + sum without (cpu) (rate(node_schedstat_running_seconds_total[5m]))
+            ) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            category: node_schedstat
+            anomaly_type: node-schedstat-schedwaitshare
+          annotations:
+            summary: "Scheduler wait-share anomaly ({{ $labels.instance }})"
+            description: "wait_share_5m={{ $value }} deviates from 6h baseline."
+        - alert: NodeSchedWaitShareCritical
+          expr: |
+            (node_exporter:node_sched_wait_share_5m > 0.75)
+            and
+            (
+              sum without (cpu) (rate(node_schedstat_waiting_seconds_total[5m]))
+              + sum without (cpu) (rate(node_schedstat_running_seconds_total[5m]))
+            ) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+            category: node_schedstat
+            anomaly_type: node-schedstat-schedwaitshareHigh
+          annotations:
+            summary: "Scheduler wait-share critical ({{ $labels.instance }})"
+            description: "wait_share_5m={{ $value }} indicates severe runqueue waiting / CPU contention."
+    - name: node-psi-alerts
+      rules:
+        - alert: NodePressureCPUWaitHigh
+          expr: |
+            node_exporter:node_pressure_cpu_wait_ratio_5m > 0.10
+          for: 5m
+          labels:
+            severity: warning
+            category: node_psi
+            anomaly_type: node_psi_cpuwait
+          annotations:
+            summary: "CPU pressure (wait) high ({{ $labels.instance }})"
+            description: "cpu_wait_ratio_5m={{ $value }}."
+        - alert: NodePressureIOWaitHigh
+          expr: |
+            node_exporter:node_pressure_io_wait_ratio_5m > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            category: node_psi
+            anomaly_type: node_psi_iowait
+          annotations:
+            summary: "IO pressure (wait) high ({{ $labels.instance }})"
+            description: "io_wait_ratio_5m={{ $value }}."
+        - alert: NodePressureMemWaitHigh
+          expr: |
+            node_exporter:node_pressure_mem_wait_ratio_5m > 0.02
+          for: 5m
+          labels:
+            severity: warning
+            category: node_psi
+            anomaly_type: node_psi_memwait
+          annotations:
+            summary: "Memory pressure (wait) high ({{ $labels.instance }})"
+            description: "mem_wait_ratio_5m={{ $value }}."
+    - name: node-netstat-alerts
+      rules:
+        - alert: NodeTcpReliabilityDegraded
+          expr: |
+            node_exporter:node_net_tcp_retrans_timeout:rate5m > 2
+          for: 5m
+          labels:
+            severity: warning
+            category: node_netstat
+            anomaly_type: node_netstat_tcp_retrans_timeout
+          annotations:
+            summary: "TCP reliability degraded ({{ $labels.instance }})"
+            description: "tcp_retrans_timeout_rate5m={{ $value }} (retrans+timeouts)."
+        - alert: NodeTcpListenDropsHigh
+          expr: |
+            node_exporter:node_net_tcp_listen_drops:rate5m > 1
+          for: 5m
+          labels:
+            severity: critical
+            category: node_netstat
+            anomaly_type: node_netstat_tcp_listen_drops
+          annotations:
+            summary: "TCP listen drops detected ({{ $labels.instance }})"
+            description: "tcp_listen_drops_rate5m={{ $value }}; server is dropping incoming connections."
+    - name: node-netdev-alerts
+      rules:
+        - alert: NodeNetRxDropRatioHigh
+          expr: |
+            node_exporter:node_net_rx_drop_ratio_ens33:rate5m > 0.001
+          for: 10m
+          labels:
+            severity: warning
+            category: node_netdev
+            anomaly_type: node_netdev_rxdrop
+          annotations:
+            summary: "RX drop rate high ({{ $labels.instance }})"
+            description: "RX drop rate > 0.1% sustained for 10 minutes, with RX pps > 100. Possible causes: network congestion, queue overflow, or driver issues."
+        - alert: NodeNetTxDropRatioHigh
+          expr: |
+            node_exporter:node_net_tx_drop_ratio_ens33:rate5m > 0.001
+          for: 10m
+          labels:
+            severity: warning
+            category: node_netdev
+            anomaly_type: node_netdev_txdrop
+          annotations:
+            summary: "TX drop rate high ({{ $labels.instance }})"
+            description: "TX drop rate > 0.1% sustained for 10 minutes, with TX pps > 100. Possible causes: upstream link issues, network congestion, or queue overflow."
+        - alert: NodeNetRxErrorRatioHigh
+          expr: |
+            node_exporter:node_net_rx_loss_error_ratio_ens33:rate5m > 0.0001
+          for: 10m
+          labels:
+            severity: warning
+            category: node_netdev
+            anomaly_type: node_netdev_rxerror
+          annotations:
+            summary: "RX error rate high ({{ $labels.instance }})"
+            description: "RX error rate > 0.01% sustained for 10 minutes, with RX pps > 100. Possible causes: link quality issues, driver or hardware problems."
+        - alert: NodeNetTxErrorRatioHigh
+          expr: |
+            node_exporter:node_net_tx_loss_error_ratio_ens33:rate5m > 0.0001
+          for: 10m
+          labels:
+            severity: warning
+            category: node_netdev
+            anomaly_type: node_netdev_txerror
+          annotations:
+            summary: "TX error rate high ({{ $labels.instance }})"
+            description: "TX error rate > 0.01% sustained for 10 minutes, with TX pps > 100. Possible causes: network card failures, upstream link issues, or congestion."
+    - name: node-mem-alerts
+      rules:
+        - alert: NodeMemUtilizationHigh
+          expr: |
+            (
+              node_exporter:node_mem_utilization_ratio > 0.90
+            )
+            and
+            (
+              node_exporter:node_mem_utilization_ratio
+              >
+              avg_over_time(node_exporter:node_mem_utilization_ratio[6h] offset 5m)
+              + 2 * clamp_min(stddev_over_time(node_exporter:node_mem_utilization_ratio[6h] offset 5m), 0.03)
+            )
+          for: 5m
+          labels:
+            severity: warning
+            category: node_mem
+            anomaly_type: node_mem_utilization
+          annotations:
+            summary: "Memory utilization high above baseline ({{ $labels.instance }})"
+            description: "Memory utilization > 90% and above 6h baseline + 2*stddev (excluding last 5m) for 5 minutes."
+        - alert: NodeMemHeadroomLow
+          expr: |
+            node_exporter:node_mem_headroom_ratio < 0.10
+          for: 5m
+          labels:
+            severity: critical
+            category: node_mem
+            anomaly_type: node_mem_headroom
+          annotations:
+            summary: "Low available memory headroom ({{ $labels.instance }})"
+            description: "Available memory headroom < 10% for 5 minutes. High risk of reclaim thrashing and OOM."
+        - alert: NodeMemHeadroomSlopeHigh
+          expr: |
+            node_exporter:node_mem_headroom_slope_bytes_per_sec_5m < -1e7
+          for: 5m
+          labels:
+            severity: warning
+            category: node_mem
+            anomaly_type: node_mem_slope
+          annotations:
+            summary: "Available memory decreasing rapidly ({{ $labels.instance }})"
+            description: "Headroom is decreasing faster than 10MB/s for 5 minutes. Possible memory leak or sharp workload increase."
+        - alert: NodeMemCacheRatioHigh
+          expr: |
+            (
+              node_exporter:node_mem_cache_ratio > 0.70
+            )
+            and
+            (
+              node_exporter:node_mem_cache_ratio
+              >
+              avg_over_time(node_exporter:node_mem_cache_ratio[6h] offset 5m)
+              + 2 * clamp_min(stddev_over_time(node_exporter:node_mem_cache_ratio[6h] offset 5m), 0.05)
+            )
+          for: 5m
+          labels:
+            severity: warning
+            category: node_mem
+            anomaly_type: node_mem_cache
+          annotations:
+            summary: "High page cache ratio above baseline ({{ $labels.instance }})"
+            description: "Page cache ratio > 50% and above 6h baseline + 2*stddev (excluding last 5m) for 5 minutes."
+        - alert: NodeMemAnonRatioHigh
+          expr: |
+            (
+              node_exporter:node_mem_anon_ratio > 0.60
+            )
+            and
+            (
+              node_exporter:node_mem_anon_ratio
+              >
+              avg_over_time(node_exporter:node_mem_anon_ratio[6h] offset 5m)
+              + 2 * clamp_min(stddev_over_time(node_exporter:node_mem_anon_ratio[6h] offset 5m), 0.05)
+            )
+          for: 5m
+          labels:
+            severity: warning
+            category: node_mem
+            anomaly_type: node_mem_anon
+          annotations:
+            summary: "High anonymous memory ratio above baseline ({{ $labels.instance }})"
+            description: "Anonymous memory ratio > 60% and above 6h baseline + 2*stddev (excluding last 5m) for 5 minutes."
+        - alert: NodeMemDirtyWritebackRatioHigh
+          expr: |
+            (
+              node_exporter:node_mem_dirty_writeback_ratio > 0.05
+            )
+            and
+            (
+              node_exporter:node_mem_dirty_writeback_ratio
+              >
+              avg_over_time(node_exporter:node_mem_dirty_writeback_ratio[6h] offset 5m)
+              + 2 * clamp_min(stddev_over_time(node_exporter:node_mem_dirty_writeback_ratio[6h] offset 5m), 0.05)
+            )
+          for: 5m
+          labels:
+            severity: warning
+            category: node_mem
+            anomaly_type: node_mem_dirtywriteback
+          annotations:
+            summary: "High dirty/writeback ratio above baseline ({{ $labels.instance }})"
+            description: "Dirty+writeback ratio > 5% and above 6h baseline + 2*stddev (excluding last 5m) for 5 minutes."
+        - alert: NodeMemKernelHardReclaimRatioHigh
+          expr: |
+            node_exporter:node_mem_kernel_hard_reclaim_ratio > 0.20
+          for: 5m
+          labels:
+            severity: warning
+            category: node_mem
+            anomaly_type: node_mem_kernel_hard_reclaim
+          annotations:
+            summary: "High kernel hard reclaim ratio ({{ $labels.instance }})"
+            description: "Kernel hard-reclaim ratio > 20% for 5 minutes."
+    - name: node-load-alerts
+      rules:
+        - alert: NodeLoadSustainedHigh
+          expr: |
+            (
+              node_load15
+              / count without(cpu, mode) (node_cpu_seconds_total{mode="idle"})
+            ) > 1.0
+          for: 5m
+          labels:
+            severity: warning
+            category: node_load
+            anomaly_type: node_load_sustainedhigh
+          annotations:
+            summary: "Sustained high normalized load ({{ $labels.instance }})"
+            description: "Normalized load15 (load15 / CPU cores) > 1.0 for 10 minutes."
+        - alert: NodeLoadSpiking
+          expr: |
+            (
+              (
+                node_load1
+                / count without(cpu, mode) (node_cpu_seconds_total{mode="idle"})
+              ) > 1.0
+            )
+            and
+            (node_load1 > 1.5 * node_load15)
+          for: 5m
+          labels:
+            severity: warning
+            category: node_load
+            anomaly_type: node_load_spike
+          annotations:
+            summary: "Load spike above the long-window baseline ({{ $labels.instance }})"
+            description: "Normalized load1 stays above 1.0 and remains at least 1.5x load15 for 5 minutes. This usually indicates a sudden burst of runnable work."
+    - name: node-fs-alerts
+      rules:
+        - alert: NodeRootFSDeviceError
+          expr: |
+            node_exporter:node_filesystem_root:device_error > 0
+          for: 5m
+          labels:
+            severity: critical
+            category: node_fs
+            anomaly_type: node_fs_deviceerror
+          annotations:
+            summary: "Root FS device_error ({{ $labels.instance }})"
+            description: "node_filesystem_root:device_error > 0 for 5 minutes."
+        - alert: NodeRootFSReadOnly
+          expr: |
+            node_exporter:node_filesystem_root:readonly > 0
+          for: 5m
+          labels:
+            severity: critical
+            category: node_fs
+            anomaly_type: node_fs_readonly
+          annotations:
+            summary: "Root FS read-only ({{ $labels.instance }})"
+            description: "node_filesystem_root:readonly > 0 for 5 minutes."
+        - alert: NodeRootFSSpaceLow
+          expr: |
+            node_exporter:node_filesystem_root:avail_ratio < 0.10
+          for: 5m
+          labels:
+            severity: warning
+            category: node_fs
+            anomaly_type: node_fs_spacelow
+          annotations:
+            summary: "Root FS low space ({{ $labels.instance }})"
+            description: "node_filesystem_root:avail_ratio < 10% for 5 minutes."
+        - alert: NodeRootFSInodeLow
+          expr: |
+            node_exporter:node_filesystem_root:inode_free_ratio < 0.05
+          for: 5m
+          labels:
+            severity: warning
+            category: node_fs
+            anomaly_type: node_fs_inodelow
+          annotations:
+            summary: "Root FS low inodes ({{ $labels.instance }})"
+            description: "node_filesystem_root:inode_free_ratio < 5% for 5 minutes."
+    - name: node-filefd-alerts
+      rules:
+        - alert: NodeFileFDUtilizationHigh
+          expr: |
+            node_exporter:node_filefd:utilization_ratio > 0.90
+          for: 5m
+          labels:
+            severity: warning
+            category: node_filefd
+            anomaly_type: node_filefd_utilhigh
+          annotations:
+            summary: "High file descriptor utilization ({{ $labels.instance }})"
+            description: "node_filefd:utilization_ratio > 90% for 5 minutes."
+        - alert: NodeFileFDAllocatedDeltaHigh
+          expr: |
+            (node_exporter:node_filefd:allocated_delta_5m > 10000)
+            and
+            (node_exporter:node_filefd:utilization_ratio > 0.70)
+          for: 5m
+          labels:
+            severity: warning
+            category: node_filefd
+            anomaly_type: node_filefd_allocspike
+          annotations:
+            summary: "File descriptor allocation increasing rapidly ({{ $labels.instance }})"
+            description: "node_filefd:allocated_delta_5m > 10000 and utilization_ratio > 70% for 5 minutes."
+    - name: node-disk-alerts
+      rules:
+        - alert: NodeDiskUtilizationHigh
+          expr: |
+            node_exporter:node_disk:utilization_max_5m > 0.90
+          for: 5m
+          labels:
+            severity: warning
+            category: node_disk
+            anomaly_type: node_disk_utilhigh
+          annotations:
+            summary: "Disk utilization high ({{ $labels.instance }})"
+            description: "node_disk:utilization_max_5m > 90% for 5 minutes."
+        - alert: NodeDiskQueueDepthHigh
+          expr: |
+            node_exporter:node_disk:queue_depth_max_5m > 2
+          for: 5m
+          labels:
+            severity: warning
+            category: node_disk
+            anomaly_type: node_disk_queuehigh
+          annotations:
+            summary: "Disk queue depth high ({{ $labels.instance }})"
+            description: "node_disk:queue_depth_max_5m > 2 for 5 minutes."
+        - alert: NodeDiskReadLatencyHigh
+          expr: |
+            node_exporter:node_disk:read_latency_avg_5m > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            category: node_disk
+            anomaly_type: node_disk_readlatencyhigh
+          annotations:
+            summary: "Disk read latency high ({{ $labels.instance }})"
+            description: "node_disk:read_latency_avg_5m > 50ms for 5 minutes."
+        - alert: NodeDiskWriteLatencyHigh
+          expr: |
+            node_exporter:node_disk:write_latency_avg_5m > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            category: node_disk
+            anomaly_type: node_disk_writelatencyhigh
+          annotations:
+            summary: "Disk write latency high ({{ $labels.instance }})"
+            description: "node_disk:write_latency_avg_5m > 50ms for 5 minutes."
+    - name: node-cpu-alerts
+      rules:
+        - alert: NodeCPUUtilHigh
+          expr: |
+            node_exporter:node_cpu_util_ratio > 0.90
+          for: 5m
+          labels:
+            severity: warning
+            category: node_cpu
+            anomaly_type: node_cpu_utilhigh
+          annotations:
+            summary: "High CPU utilization ({{ $labels.instance }})"
+            description: "node_cpu_util_ratio > 90% for 5 minutes."

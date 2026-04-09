@@ -1,0 +1,35 @@
+﻿# Alert template built only from metrics recorded in monitor-kube-prometheus-stack-values.yaml (additionalPrometheusRulesMap).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kube-proxy-alerts
+  namespace: monitor
+  labels:
+    release: monitor
+    app.kubernetes.io/instance: monitor
+spec:
+  groups:
+    - name: kube-proxy-alerts
+      rules:
+        - alert: KubeProxyConntrackInvalidDropsHigh
+          expr: |
+            kube:kubeproxy:ct_state_invalid_dropped_packets:rate5m > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_proxy
+            anomaly_type: kubeproxy_conntrack_invalid_drops
+          annotations:
+            summary: "kube-proxy drops invalid conntrack-state packets"
+            description: "kube-proxy records invalid conntrack-state packet drops over 10 minutes."
+        - alert: KubeProxySyncRulesLatencyHigh
+          expr: |
+            kube:kubeproxy:sync_full_proxy_rules_duration_seconds:avg5m > 1
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_proxy
+            anomaly_type: kubeproxy_sync_latency_high
+          annotations:
+            summary: "kube-proxy full rule sync latency is high"
+            description: "Average full proxy-rule sync latency stays above 1 second for 10 minutes."

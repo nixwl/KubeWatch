@@ -1,0 +1,24 @@
+﻿# Alert template built only from metrics recorded in monitor-kube-prometheus-stack-values.yaml (additionalPrometheusRulesMap).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kube-apiservice-alerts
+  namespace: monitor
+  labels:
+    release: monitor
+    app.kubernetes.io/instance: monitor
+spec:
+  groups:
+    - name: kube-apiservice-alerts
+      rules:
+        - alert: APIServiceUnavailable
+          expr: |
+            kube:apiservice:unavailable:max > 0
+          for: 10m
+          labels:
+            severity: critical
+            category: kube_apiservice
+            anomaly_type: apiservice_unavailable
+          annotations:
+            summary: "An aggregated APIService is unavailable"
+            description: "At least one APIService stays unavailable for 10 minutes."

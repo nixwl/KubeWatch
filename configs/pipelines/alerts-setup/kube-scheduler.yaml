@@ -1,0 +1,57 @@
+﻿# Alert template built only from metrics recorded in monitor-kube-prometheus-stack-values.yaml (additionalPrometheusRulesMap).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kube-scheduler-alerts
+  namespace: monitor
+  labels:
+    release: monitor
+    app.kubernetes.io/instance: monitor
+spec:
+  groups:
+    - name: kube-scheduler-alerts
+      rules:
+        - alert: KubeSchedulerPendingPodsHigh
+          expr: |
+            kube:scheduler:pending_pods:total > 20
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_scheduler
+            anomaly_type: scheduler_pending_pods_high
+          annotations:
+            summary: "Scheduler pending pod backlog is high"
+            description: "The scheduler keeps more than 20 pending pods for 10 minutes."
+        - alert: KubeSchedulerSchedulingAttemptsHigh
+          expr: |
+            kube:scheduler:pod_scheduling_attempts:avg5m > 2
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_scheduler
+            anomaly_type: scheduler_attempts_high
+          annotations:
+            summary: "Scheduler needs many attempts per pod"
+            description: "Average scheduling attempts per pod stay above 2 for 10 minutes."
+        - alert: KubeSchedulerAssumedPodsCacheHigh
+          expr: |
+            kube:scheduler:cache_size:assumed_pods > 100
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_scheduler
+            anomaly_type: scheduler_assumed_cache_high
+          annotations:
+            summary: "Scheduler assumed-pod cache is high"
+            description: "The scheduler cache keeps more than 100 assumed pods for 10 minutes."
+        - alert: KubeSchedulerAlgorithmLatencyHigh
+          expr: |
+            kube:scheduler:scheduling_algorithm_duration_seconds:avg5m > 0.1
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_scheduler
+            anomaly_type: scheduler_algorithm_latency_high
+          annotations:
+            summary: "Scheduler algorithm latency is high"
+            description: "Average scheduling algorithm latency stays above 100 ms for 10 minutes."

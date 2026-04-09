@@ -1,0 +1,29 @@
+# Applies to: coreDns.serviceMonitor.metricRelabelings
+metricRelabelings:
+  - action: drop
+    regex: '.*_bucket$'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'coredns_build_info'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'coredns_dns_request_size_bytes_.*|coredns_dns_response_size_bytes_.*'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'coredns_proxy_conn_cache_hits_total|coredns_proxy_conn_cache_misses_total'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'coredns_health_request_duration_seconds_.*'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'coredns_hosts_entries|coredns_hosts_reload_timestamp_seconds'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'coredns_kubernetes_dns_programming_duration_seconds_.*'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'coredns_plugin_enabled|coredns_local_localhost_requests_total'
+    sourceLabels: [__name__]
+  - action: drop
+    regex: 'go_.*|process_.*'
+    sourceLabels: [__name__]

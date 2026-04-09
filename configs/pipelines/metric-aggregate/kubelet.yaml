@@ -1,0 +1,39 @@
+# Extracted from: additionalPrometheusRulesMap.kube-aggregates (kubelet-aggregates)
+# Source: ../prometheus_stack-install/monitor-kube-prometheus-stack-values.yaml
+groups:
+  - name: kubelet-aggregates
+    rules:
+      - record: kube:kubelet:http_inflight:total
+        expr: sum by (cluster) (kubelet_http_inflight_requests)
+      - record: kube:kubelet:http_effective_service_time_seconds:est5m
+        expr: sum by (cluster) (kubelet_http_inflight_requests) / clamp_min(sum by (cluster) (rate(kubelet_http_requests_total[5m])), 1e-9)
+      - record: kube:kubelet:storage_op:latency_seconds:avg5m
+        expr: sum by (cluster) (rate(storage_operation_duration_seconds_sum[5m])) / clamp_min(sum by (cluster) (rate(storage_operation_duration_seconds_count[5m])), 1e-9)
+      - record: kube:kubelet:storage_op:qps:rate5m
+        expr: sum by (cluster) (rate(storage_operation_duration_seconds_count[5m]))
+      - record: kube:kubelet:storage_op:error_ratio:5m
+        expr: sum by (cluster) (rate(storage_operation_duration_seconds_count{status!="success"}[5m])) / clamp_min(sum by (cluster) (rate(storage_operation_duration_seconds_count[5m])), 1e-9)
+      - record: kube:pvc:used_ratio
+        expr: 1 - (min by (cluster, namespace, persistentvolumeclaim) (kubelet_volume_stats_available_bytes) / clamp_min(max by (cluster, namespace, persistentvolumeclaim) (kubelet_volume_stats_capacity_bytes), 1))
+      - record: kube:pv:abnormal:count
+        expr: sum by (cluster) (kube_persistentvolume_status_phase{phase=~"Failed|Released|Available|Pending"} == 1)
+      - record: kube:kubelet:pinning_error_ratio:5m
+        expr: (sum by (cluster) (rate(kubelet_cpu_manager_pinning_errors_total[5m])) + sum by (cluster) (rate(kubelet_memory_manager_pinning_errors_total[5m]))) / clamp_min((sum by (cluster) (rate(kubelet_cpu_manager_pinning_requests_total[5m])) + sum by (cluster) (rate(kubelet_memory_manager_pinning_requests_total[5m]))), 1e-9)
+      - record: kube:kubelet:topology_admission_error_ratio:5m
+        expr: sum by (cluster) (rate(kubelet_topology_manager_admission_errors_total[5m])) / clamp_min(sum by (cluster) (rate(kubelet_topology_manager_admission_requests_total[5m])), 1e-9)
+      - record: kube:kubelet:docker_ops_qps:rate5m
+        expr: sum by (cluster) (rate(kubelet_docker_operations_total[5m]))
+      - record: kube:kubelet:docker_ops_latency_seconds:avg5m
+        expr: sum by (cluster) (rate(kubelet_docker_operations_duration_seconds_sum[5m])) / clamp_min(sum by (cluster) (rate (kubelet_docker_operations_duration_seconds_count[5m])), 1e-9)
+      - record: kube:kubelet:cni_ops_error_ratio:rate5m
+        expr: sum by (cluster) (rate(kubelet_network_plugin_operations_errors_total[5m])) / clamp_min(sum by (cluster) (rate(kubelet_network_plugin_operations_total[5m])), 1e-9)
+      - record: kube:kubelet:pod_start_latency_seconds:avg5m
+        expr: sum by (cluster) (rate(kubelet_pod_start_duration_seconds_sum[5m])) / clamp_min(sum by (cluster) (rate(kubelet_pod_start_duration_seconds_count[5m])), 1e-9)
+      - record: kube:kubelet:pod_status_sync_latency_seconds:avg5m
+        expr: sum by (cluster) (rate(kubelet_pod_status_sync_duration_seconds_sum[5m])) / clamp_min(sum by (cluster) (rate(kubelet_pod_status_sync_duration_seconds_count[5m])), 1e-9)
+      - record: kube:kubelet:pod_start_error_ratio:rate5m
+        expr: sum by (cluster) (rate(kubelet_started_pods_errors_total[5m])) / clamp_min(sum by (cluster) (rate(kubelet_started_pods_total[5m])), 1e-9)
+      - record: kube:kubelet:pods_gap:desired_minus_working
+        expr: sum by (cluster) (kubelet_desired_pods) - sum by (cluster) (kubelet_working_pods)
+      - record: kube:kubelet:containers_exited_ratio
+        expr: sum by (cluster) (kubelet_running_containers{container_state="exited"}) / clamp_min(sum by (cluster) (kubelet_running_containers), 1e-9)

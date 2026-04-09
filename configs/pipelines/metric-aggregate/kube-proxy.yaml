@@ -1,0 +1,9 @@
+# Extracted from: additionalPrometheusRulesMap.kube-aggregates (kp-aggregates)
+# Source: ../prometheus_stack-install/monitor-kube-prometheus-stack-values.yaml
+groups:
+  - name: kp-aggregates
+    rules:
+      - record: kube:kubeproxy:ct_state_invalid_dropped_packets:rate5m
+        expr: sum by (cluster) (rate(kubeproxy_iptables_ct_state_invalid_dropped_packets_total[5m]))
+      - record: kube:kubeproxy:sync_full_proxy_rules_duration_seconds:avg5m
+        expr: sum by (cluster) (rate(kubeproxy_sync_full_proxy_rules_duration_seconds_sum[5m])) / clamp_min(sum by (cluster) (rate(kubeproxy_sync_full_proxy_rules_duration_seconds_count[5m])), 1e-9)

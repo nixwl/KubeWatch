@@ -1,0 +1,156 @@
+﻿# Alert template built only from metrics recorded in monitor-kube-prometheus-stack-values.yaml (additionalPrometheusRulesMap).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kube-apiserver-alerts
+  namespace: monitor
+  labels:
+    release: monitor
+    app.kubernetes.io/instance: monitor
+spec:
+  groups:
+    - name: kube-apiserver-alerts
+      rules:
+        - alert: APIServerAdmissionRejectRatioHigh
+          expr: |
+            kube:apiserver:admission_controller:rejected:ratio5m > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_apiserver
+            anomaly_type: apiserver_admission_reject_ratio
+          annotations:
+            summary: "kube-apiserver admission rejection ratio is high"
+            description: "The admission controller rejection ratio stays above 5% for 10 minutes."
+        - alert: APIServerAdmissionWebhookErrorRatioHigh
+          expr: |
+            kube:apiserver:admission_controller:admission_webhook_error_ratio:ratio5m > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_apiserver
+            anomaly_type: apiserver_admission_webhook_error_ratio
+          annotations:
+            summary: "kube-apiserver admission webhook error ratio is high"
+            description: "Non-2xx admission webhook responses stay above 5% for 10 minutes."
+        - alert: APIServerAuthenticationFailureRatioHigh
+          expr: |
+            kube:apiserver:authentication:attempts_fail_ratio:ratio5m > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_apiserver
+            anomaly_type: apiserver_authentication_failure_ratio
+          annotations:
+            summary: "kube-apiserver authentication failures are elevated"
+            description: "Authentication failures stay above 5% of attempts for 10 minutes."
+        - alert: APIServerTokenRequestStaleTokensHigh
+          expr: |
+            kube:apiserver:serviceaccount:tokenrequest_stale_tokens:rate5m > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_apiserver
+            anomaly_type: apiserver_stale_token_requests
+          annotations:
+            summary: "kube-apiserver issues stale service-account tokens"
+            description: "The stale token request rate remains above zero for 10 minutes."
+        - alert: APIServerInflightRequestsHigh
+          expr: |
+            kube:apiserver:requests:inflight:max5m > 200
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_apiserver
+            anomaly_type: apiserver_inflight_requests_high
+          annotations:
+            summary: "kube-apiserver inflight request load is high"
+            description: "Inflight requests stay above 200 over the last 10 minutes."
+        - alert: APIServerServerErrorRatioHigh
+          expr: |
+            kube:apiserver:requests:server_error_ratio:ratio5m > 0.01
+          for: 10m
+          labels:
+            severity: critical
+            category: kube_apiserver
+            anomaly_type: apiserver_server_error_ratio
+          annotations:
+            summary: "kube-apiserver 5xx ratio is high"
+            description: "Server errors exceed 1% of requests for 10 minutes."
+        - alert: APIServerRequestLatencyHigh
+          expr: |
+            kube:apiserver:requests:duration:avg5m > 1
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_apiserver
+            anomaly_type: apiserver_request_latency_high
+          annotations:
+            summary: "kube-apiserver request latency is high"
+            description: "Average request duration stays above 1 second for 10 minutes."
+        - alert: APIServerAPFQueueingHigh
+          expr: |
+            kube:apiserver:apf:inqueue_seats:max5m > 10
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_apiserver
+            anomaly_type: apiserver_apf_queueing_high
+          annotations:
+            summary: "kube-apiserver APF queueing is high"
+            description: "APF queued seats stay above 10 for 10 minutes."
+        - alert: APIServerAPFSeatUtilizationHigh
+          expr: |
+            kube:apiserver:apf:seat_utilization:avg5m > 0.9
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_apiserver
+            anomaly_type: apiserver_apf_seat_utilization_high
+          annotations:
+            summary: "kube-apiserver APF seat utilization is high"
+            description: "APF executing-seat utilization stays above 90% for 10 minutes."
+        - alert: APIServerWatchCacheFallbackHigh
+          expr: |
+            kube:apiserver:watchcache:consistent_read_fallback_ratio:ratio5m > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_apiserver
+            anomaly_type: apiserver_watchcache_fallback_ratio
+          annotations:
+            summary: "kube-apiserver watch-cache fallback ratio is high"
+            description: "Watch-cache fallback reads stay above 5% for 10 minutes."
+        - alert: APIServerTokenCacheMissRatioHigh
+          expr: |
+            kube:apiserver:authn:token_cache:miss_ratio:ratio5m > 0.5
+          for: 10m
+          labels:
+            severity: warning
+            category: kube_apiserver
+            anomaly_type: apiserver_token_cache_miss_ratio
+          annotations:
+            summary: "kube-apiserver token-cache miss ratio is high"
+            description: "Authentication token-cache misses stay above 50% for 10 minutes."
+        - alert: APIServerAuditRequestsRejected
+          expr: |
+            kube:apiserver:audit:requests_rejected:rate5m > 0
+          for: 5m
+          labels:
+            severity: warning
+            category: kube_apiserver
+            anomaly_type: apiserver_audit_rejected_requests
+          annotations:
+            summary: "kube-apiserver rejects audit requests"
+            description: "Audit request rejections continue over a 5-minute window."
+        - alert: APIServerServiceRepairErrors
+          expr: |
+            kube:apiserver:service_repair:reconcile_errors:rate5m > 0
+          for: 10m
+          labels:
+            severity: critical
+            category: kube_apiserver
+            anomaly_type: apiserver_service_repair_errors
+          annotations:
+            summary: "kube-apiserver service repair reports reconcile errors"
+            description: "ClusterIP or NodePort repair reconcile errors keep occurring for 10 minutes."

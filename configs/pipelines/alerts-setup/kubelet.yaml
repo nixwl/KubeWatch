@@ -1,0 +1,178 @@
+﻿# Alert template built only from metrics recorded in monitor-kube-prometheus-stack-values.yaml (additionalPrometheusRulesMap).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kubelet-alerts
+  namespace: monitor
+  labels:
+    release: monitor
+    app.kubernetes.io/instance: monitor
+spec:
+  groups:
+    - name: kubelet-alerts
+      rules:
+        - alert: KubeletHTTPInflightHigh
+          expr: |
+            kube:kubelet:http_inflight:total > 200
+          for: 10m
+          labels:
+            severity: warning
+            category: kubelet
+            anomaly_type: kubelet_http_inflight_high
+          annotations:
+            summary: "kubelet inflight HTTP requests are high"
+            description: "kubelet inflight HTTP requests stay above 200 for 10 minutes."
+        - alert: KubeletHTTPEffectiveServiceTimeHigh
+          expr: |
+            kube:kubelet:http_effective_service_time_seconds:est5m > 1
+          for: 10m
+          labels:
+            severity: warning
+            category: kubelet
+            anomaly_type: kubelet_http_service_time_high
+          annotations:
+            summary: "kubelet effective HTTP service time is high"
+            description: "Estimated kubelet HTTP service time stays above 1 second for 10 minutes."
+        - alert: KubeletStorageOpLatencyHigh
+          expr: |
+            kube:kubelet:storage_op:latency_seconds:avg5m > 1
+          for: 10m
+          labels:
+            severity: warning
+            category: kubelet
+            anomaly_type: kubelet_storage_latency_high
+          annotations:
+            summary: "kubelet storage operation latency is high"
+            description: "Average storage operation latency stays above 1 second for 10 minutes."
+        - alert: KubeletStorageOpErrorRatioHigh
+          expr: |
+            kube:kubelet:storage_op:error_ratio:5m > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            category: kubelet
+            anomaly_type: kubelet_storage_error_ratio_high
+          annotations:
+            summary: "kubelet storage operation error ratio is high"
+            description: "Storage operation errors stay above 5% for 10 minutes."
+        - alert: PVCUsedRatioHigh
+          expr: |
+            kube:pvc:used_ratio > 0.9
+          for: 10m
+          labels:
+            severity: warning
+            category: kubelet
+            anomaly_type: pvc_used_ratio_high
+          annotations:
+            summary: "A PVC is almost full"
+            description: "PVC used ratio stays above 90% for 10 minutes."
+        - alert: PVAbnormalCountHigh
+          expr: |
+            kube:pv:abnormal:count > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kubelet
+            anomaly_type: pv_abnormal_count_high
+          annotations:
+            summary: "Abnormal persistent volumes exist"
+            description: "At least one persistent volume remains in an abnormal phase for 10 minutes."
+        - alert: KubeletPinningErrorRatioHigh
+          expr: |
+            kube:kubelet:pinning_error_ratio:5m > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kubelet
+            anomaly_type: kubelet_pinning_error_ratio_high
+          annotations:
+            summary: "kubelet pinning errors are occurring"
+            description: "CPU or memory-manager pinning errors continue over a 10-minute window."
+        - alert: KubeletTopologyAdmissionErrorRatioHigh
+          expr: |
+            kube:kubelet:topology_admission_error_ratio:5m > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kubelet
+            anomaly_type: kubelet_topology_admission_error_ratio_high
+          annotations:
+            summary: "kubelet topology admission errors are occurring"
+            description: "Topology-manager admission errors continue over a 10-minute window."
+        - alert: KubeletDockerOpsLatencyHigh
+          expr: |
+            kube:kubelet:docker_ops_latency_seconds:avg5m > 1
+          for: 10m
+          labels:
+            severity: warning
+            category: kubelet
+            anomaly_type: kubelet_docker_latency_high
+          annotations:
+            summary: "kubelet docker operation latency is high"
+            description: "Average docker operation latency stays above 1 second for 10 minutes."
+        - alert: KubeletCNIOperationErrorRatioHigh
+          expr: |
+            kube:kubelet:cni_ops_error_ratio:rate5m > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            category: kubelet
+            anomaly_type: kubelet_cni_error_ratio_high
+          annotations:
+            summary: "kubelet CNI operation error ratio is high"
+            description: "CNI operation errors stay above 5% for 10 minutes."
+        - alert: KubeletPodStartLatencyHigh
+          expr: |
+            kube:kubelet:pod_start_latency_seconds:avg5m > 30
+          for: 10m
+          labels:
+            severity: warning
+            category: kubelet
+            anomaly_type: kubelet_pod_start_latency_high
+          annotations:
+            summary: "kubelet pod-start latency is high"
+            description: "Average pod-start latency stays above 30 seconds for 10 minutes."
+        - alert: KubeletPodStatusSyncLatencyHigh
+          expr: |
+            kube:kubelet:pod_status_sync_latency_seconds:avg5m > 5
+          for: 10m
+          labels:
+            severity: warning
+            category: kubelet
+            anomaly_type: kubelet_pod_status_sync_latency_high
+          annotations:
+            summary: "kubelet pod-status sync latency is high"
+            description: "Average pod-status sync latency stays above 5 seconds for 10 minutes."
+        - alert: KubeletPodStartErrorRatioHigh
+          expr: |
+            kube:kubelet:pod_start_error_ratio:rate5m > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            category: kubelet
+            anomaly_type: kubelet_pod_start_error_ratio_high
+          annotations:
+            summary: "kubelet pod-start error ratio is high"
+            description: "Pod-start errors stay above 5% for 10 minutes."
+        - alert: KubeletDesiredWorkingPodsGapExists
+          expr: |
+            kube:kubelet:pods_gap:desired_minus_working > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: kubelet
+            anomaly_type: kubelet_pods_gap_exists
+          annotations:
+            summary: "kubelet desired and working pod counts diverge"
+            description: "Desired pods exceed working pods over a 10-minute window."
+        - alert: KubeletExitedContainerRatioHigh
+          expr: |
+            kube:kubelet:containers_exited_ratio > 0.1
+          for: 10m
+          labels:
+            severity: warning
+            category: kubelet
+            anomaly_type: kubelet_exited_container_ratio_high
+          annotations:
+            summary: "kubelet exited-container ratio is high"
+            description: "Exited containers exceed 10% of running containers for 10 minutes."

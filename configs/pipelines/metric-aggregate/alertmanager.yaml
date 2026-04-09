@@ -1,0 +1,9 @@
+# Extracted from: additionalPrometheusRulesMap.alertmanager-aggregates
+# Source: ../prometheus_stack-install/monitor-kube-prometheus-stack-values.yaml
+groups:
+  - name: alertmanager-status
+    rules:
+      - record: alertmanager:config_reload_failed:bool5m
+        expr: max_over_time(alertmanager_config_last_reload_successful{cluster="rancher-monitor", container="alertmanager",job="monitor-kube-prometheus-st-alertmanager",namespace="monitor"}[5m]) == bool 0
+      - record: alertmanager:notifications_failed_ratio15m
+        expr: rate(alertmanager_notifications_failed_total{cluster="rancher-monitor", container="alertmanager",job="monitor-kube-prometheus-st-alertmanager",namespace="monitor"}[15m]) / ignoring (reason) group_left () rate(alertmanager_notifications_total{cluster="rancher-monitor", container="alertmanager",job="monitor-kube-prometheus-st-alertmanager",namespace="monitor"}[15m])
