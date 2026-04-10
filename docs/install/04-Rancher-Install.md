@@ -34,7 +34,7 @@ Prepare the following before installing Rancher:
   source ~/.bashrc
   ```
 - `helm` installed on the administrative host
-- a DNS record for `rancher.example.com`: just modify [Corefile](../../configs/environments/Corefile))
+- a DNS record for `rancher.example.com`: just modify [Corefile](../../configs/environments/Corefile)
 - a certificate strategy for the Rancher ingress
 - network access from users and downstream clusters to the Rancher hostname
 
@@ -94,7 +94,7 @@ helm install rancher rancher-latest/rancher  \
 --set noProxy=127.0.0.0/8\\,10.0.0.0/8\\,cattle-system.svc\\,172.16.0.0/12\\,.svc\\,.cluster.local
 ```
 
-Alternatively, create a configuration [file](../../configs/pipelines/rancher-install/rancher-values.yaml).
+Alternatively, create a [configuration file](../../configs/pipelines/rancher-install/rancher-values.yaml).
 
 ```sh
 helm install rancher rancher-latest/rancher \
@@ -139,7 +139,7 @@ openssl s_client -showcerts -connect rancher.example.com:443 -servername rancher
 ```
 
 <p align="center">
-   <img src="../assets/images/kubernetes-install/rancher-error-info-1.png" alt="rancher-error-info-1" width="600"><br>
+   <img src="../../assets/images/kubernetes-install/rancher-error-info-1.png" alt="rancher-error-info-1" width="600"><br>
 </p>
 By testing the access from master1, you will find that a request to rancher.example.com:443 actually returns the default Traefik certificate from the K3s cluster, rather than the intended certificate for the Rancher management cluster.
 
@@ -155,6 +155,8 @@ By testing the access from master1, you will find that a request to rancher.exam
    ```
 
 2. Verify if `tls-rancher-ingress` exists. Upon discovering that it is missing, we now need to actually generate a Kubernetes TLS Secret named `tls-rancher-ingress` in the cattle-system namespace. The certificate's SAN must include `rancher.example.com`, and the CA must match the Monitor CA configuration.
+
+   > [rancher-certificate.yaml](../../configs/pipelines/rancher-install/rancher-certificate.yaml)
 
    ```sh
    # 1. check 'tls-rancher-ingress'
@@ -184,5 +186,3 @@ By testing the access from master1, you will find that a request to rancher.exam
    # 5. test
    openssl s_client -showcerts -connect rancher.example.com:443 -servername rancher.example.com </dev/null 2>/dev/null | openssl x509 -noout -subject -issuer -ext subjectAltName
    ```
-
-   - [rancher-certificate.yaml](../../configs/pipelines/rancher-install/rancher-certificate.yaml)

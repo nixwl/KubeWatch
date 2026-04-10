@@ -6,11 +6,6 @@ This document summarizes the recording rules defined under `additionalPrometheus
 
 Some rule names still reflect older experiments or contain typos. This document keeps the exact rule names that are currently deployed and explains the actual `expr` they run today.
 
-Related documents:
-
-- [retained-metrics-overview.md](../../templates/markdown/retained-metrics-overview.md)
-- [09-MetricsDrop-Process.md](./09-MetricsDrop-Process.md)
-
 Split YAML references:
 
 - [node-exporter.yaml](../../configs/pipelines/metric-aggregate/node-exporter.yaml)

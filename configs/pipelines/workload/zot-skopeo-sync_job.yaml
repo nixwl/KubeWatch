@@ -1,0 +1,98 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: skopeo-multi-sync-job
+  namespace: zot
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        node-role: worker
+      containers:
+        - name: skopeo
+          image: quay.io/skopeo/stable:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DEST_REGISTRY
+              value: "zot.zot.svc.cluster.local:5000"
+            - name: DEST_PREFIX
+              value: "mirror"
+            - name: DEST_TLS_VERIFY
+              value: "false"
+            - name: SRC_TLS_VERIFY
+              value: "true"
+            - name: MAX_RETRY
+              value: "3"
+            - name: PARALLEL
+              value: "1"
+          envFrom:
+            - secretRef:
+                name: skopeo-mirror-credentials
+          command: ["/bin/sh", "-lc"]
+          args:
+            - |
+              set -eu
+
+              log() { printf '%s %s\n' "$(date -Iseconds)" "$*"; }
+
+              copy_one() {
+                src="$1"
+
+                case "$src" in
+                  docker://*) src_tr="$src" ;;
+                  *)          src_tr="docker://$src" ;;
+                esac
+
+                ref="${src_tr#docker://}"
+                dst="docker://${DEST_REGISTRY}/${DEST_PREFIX}/${ref}"
+
+                i=1
+                while [ "$i" -le "${MAX_RETRY}" ]; do
+                  log "copy[$i/${MAX_RETRY}] $src_tr -> $dst"
+                  if skopeo copy --all \
+                      --src-tls-verify="${SRC_TLS_VERIFY}" \
+                      --dest-tls-verify="${DEST_TLS_VERIFY}" \
+                      --dest-creds "${DEST_USER}:${DEST_PASS}" \
+                      "$src_tr" "$dst"; then
+                    log "ok $ref"
+                    return 0
+                  fi
+                  log "retry $ref"
+                  i=$((i+1))
+                  sleep 2
+                done
+
+                log "fail $ref"
+                return 1
+              }
+
+              LIST=/work/images.txt
+              if [ ! -f "$LIST" ]; then
+                echo "missing $LIST" >&2
+                exit 1
+              fi
+
+              # filter out empty lines and comments, and copy images one by one (or in parallel)
+              imgs=$(grep -v '^[[:space:]]*$' "$LIST" | grep -v '^[[:space:]]*#' || true)
+
+              fail=0
+              if [ "${PARALLEL}" -gt 1 ]; then
+                # parallel copy with xargs (note: it doesn't guarantee the order of logs, but should be faster)
+                echo "$imgs" | xargs -I{} -P "${PARALLEL}" /bin/sh -lc 'copy_one "$1"' sh {}
+              else
+                echo "$imgs" | while IFS= read -r img; do
+                  copy_one "$img" || fail=1
+                done
+              fi
+
+              exit "$fail"
+          volumeMounts:
+            - name: work
+              mountPath: /work
+              readOnly: true
+      volumes:
+        - name: work
+          configMap:
+            name: skopeo-mirror-list

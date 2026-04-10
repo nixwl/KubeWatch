@@ -1,0 +1,24 @@
+bolt-path = "/var/lib/influxdb/influxd.bolt"
+engine-path = "/var/lib/influxdb/engine"
+metrics-disabled = true
+reporting-disabled = true
+
+# query settings:
+query-concurrency = 2
+query-queue-size = 10
+## 32MB ~ 256MB
+query-memory-bytes = 268435456
+query-initial-memory-bytes = 33554432
+## 512MB
+query-max-memory-bytes = 536870912
+
+# storage settings:
+## 128M
+storage-cache-max-memory-size = 134217728
+## 16MB
+storage-cache-snapshot-memory-size = 16777216
+storage-cache-snapshot-write-cold-duration = "5m0s"
+storage-max-index-log-file-size = 524288
+storage-series-id-set-cache-size = 100
+storage-max-concurrent-compactions = 1
+storage-series-file-max-concurrent-snapshot-compactions = 1

@@ -11,7 +11,7 @@ This document explains which raw metrics are intentionally retained in the monit
 
 The goal is not to reproduce every exporter metric page. The goal is to document the signals that the handwritten notes treated as operationally valuable after metric dropping.
 
-This document should still be read together with the live configuration in [monitor-kube-prometheus-stack-values.yaml](../../configs/pipelines/prometheus_stack-install/monitor-kube-prometheus-stack-values.yaml), because the notes and the current deployed values may not always be identical.
+This document should still be read together with the live configuration in [monitor-kube-prometheus-stack-values.yaml](../configs/pipelines/prometheus_stack-install/monitor-kube-prometheus-stack-values.yaml), because the notes and the current deployed values may not always be identical.
 
 ## Alertmanager
 

@@ -9,7 +9,6 @@ After completing the base K3s cluster deployment, install `cert-manager` to mana
 `cert-manager` extends Kubernetes with certificate lifecycle management. In a K3s environment, it is commonly used to:
 
 - issue internal self-signed or CA-signed certificates
-- request public certificates from ACME providers such as Let's Encrypt
 - renew certificates automatically
 - store issued key pairs as Kubernetes `Secret` objects
 

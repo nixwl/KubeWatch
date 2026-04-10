@@ -1,0 +1,196 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: logging
+data:
+  fluent-bit.conf: |
+    # ==================== Global Parameter ==================================
+    [SERVICE]
+        Flush                     2
+        Daemon                    Off
+        Log_Level                 info
+        Parsers_File              parsers.conf
+
+        HTTP_Server               On
+        HTTP_Listen               0.0.0.0
+        HTTP_Port                 2020
+
+        storage.path              /buffers/
+        storage.sync              normal
+        storage.checksum          off
+        storage.max_chunks_up     128
+        storage.backlog.mem_limit 50M
+        storage.total_limit_size  512M
+
+    # ===================== Pod logs from /var/log/pods ======================
+    # NOTE:
+    # - /var/log/pods/.../0.log is usually a symlink (symbolic link) at k3s + docker/cri-dockerd scenario
+    # - symlink target is /var/lib/docker/containers/*-json.log
+    # - Parser must be docker(json), and DS must be mounted at /var/lib/docker/containers
+    [INPUT]
+        Name              tail
+        Tag               pod.pods
+        Path              /var/log/pods/*/*/*.log
+        Parser            docker
+        Path_Key          __path
+        DB                /buffers/tail-pods.db
+        Mem_Buf_Limit     20MB
+        Skip_Long_Lines   On
+        Refresh_Interval  5
+        Rotate_Wait       30
+        storage.type      filesystem
+
+    # parse pod dimensions from /var/log/pods/<ns>_<pod>_<uid>/<container>/<n>.log
+    [FILTER]
+        Name    lua
+        Match   pod.pods
+        script  pod_path.lua
+        call    add_k8s_meta_from_path
+
+    # docker json has stream field, OPT: here retain clean stream
+    [FILTER]
+        Name    modify
+        Match   pod.pods
+        Remove  stream
+
+    # ===================== Node logs: journald (systemd) =====================
+    [INPUT]
+        Name                systemd
+        Tag                 node.journal
+        Path                /run/log/journal
+        DB                  /buffers/systemd.db
+        Read_From_Tail      On
+        Systemd_Filter_Type or
+        Systemd_Filter      _SYSTEMD_UNIT=k3s.service
+        Systemd_Filter      _SYSTEMD_UNIT=k3s-agent.service
+        Systemd_Filter      _SYSTEMD_UNIT=docker.service
+        Systemd_Filter      _SYSTEMD_UNIT=cri-docker.service
+        Systemd_Filter      _SYSTEMD_UNIT=cridocker.service
+        Systemd_Filter      _SYSTEMD_UNIT=cri-docker.socket
+        storage.type        filesystem
+
+    [FILTER]
+        Name    modify
+        Match   node.journal
+        Add     node_source journal
+
+    # ===================== Node logs: kmsg (kernel ring buffer) ==============
+    [INPUT]
+        Name         kmsg
+        Tag          node.kmsg
+        storage.type filesystem
+
+    [FILTER]
+        Name    modify
+        Match   node.kmsg
+        Add     node_source kmsg
+
+    # ===================== Node logs: tail node file(s) ======================
+    [INPUT]
+        Name              tail
+        Tag               node.file
+        Path              /host/var/log/syslog,/host/var/log/messages,/host/var/log/daemon.log,/host/var/log/docker.log
+        DB                /buffers/tail-node-files.db
+        Mem_Buf_Limit     10MB
+        Skip_Long_Lines   On
+        Refresh_Interval  5
+        Rotate_Wait       30
+        storage.type      filesystem
+
+    [FILTER]
+        Name    grep
+        Match   node.file
+        Regex   log  (k3s|dockerd|docker|cri-dockerd|cri-docker|cridockerd|kubelet)
+
+    [FILTER]
+        Name    modify
+        Match   node.file
+        Add     node_source file
+
+    # ===================== OUTPUTS to MinIO (S3 Compatible) =================
+
+    # ---------- Pod logs -> MinIO ----------
+    [OUTPUT]
+        Name                         s3
+        Match                        pod.*
+        bucket                       ${S3_BUCKET}
+        endpoint                     ${S3_ENDPOINT}
+        region                       ${S3_REGION}
+
+        store_dir                    /buffers/s3/pods
+        store_dir_limit_size         256M
+
+        total_file_size              5M
+        upload_timeout               5m
+        compression                  gzip
+
+        preserve_data_ordering       On
+
+        s3_key_format                /k8s/pods/${NODE_NAME}/%Y/%m/%d/%H/%M/%S-$UUID.gz
+        s3_key_format_tag_delimiters .-
+
+        retry_limit                  False
+
+        # tls                        On
+        # tls.verify                 false
+
+    # ---------- Node logs -> MinIO ----------
+    [OUTPUT]
+        Name                         s3
+        Match                        node.*
+        bucket                       ${S3_BUCKET}
+        endpoint                     ${S3_ENDPOINT}
+        region                       ${S3_REGION}
+
+        store_dir                    /buffers/s3/node
+        store_dir_limit_size         256M
+
+        total_file_size              5M
+        upload_timeout               5m
+        compression                  gzip
+
+        preserve_data_ordering       On
+
+        s3_key_format                /k8s/nodes/${NODE_NAME}/%Y/%m/%d/%H/%M/%S-$UUID.gz
+        s3_key_format_tag_delimiters .-
+
+        retry_limit                  False
+
+        # tls                        On
+        # tls.verify                 false
+
+  parsers.conf: |
+    # docker json.log: {"log":"...","stream":"stdout","time":"2026-01-19T03:32:31.123456789Z"}
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%LZ
+        Time_Keep   On
+
+    # TEMP: CRI format, if we use /var/log/containers + CRI
+    [PARSER]
+        Name        cri
+        Format      regex
+        Regex       ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<log>.*)$
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+  pod_path.lua: |
+    function add_k8s_meta_from_path(tag, ts, record)
+      local path = record["__path"] or ""
+      local ns, pod, uid, container, n =
+        string.match(path, "/var/log/pods/([^_]+)_([^_]+)_([^/]+)/([^/]+)/([^/]+)%.log$")
+
+      if ns ~= nil then
+        record["kubernetes"] = record["kubernetes"] or {}
+        record["kubernetes"]["namespace_name"] = ns
+        record["kubernetes"]["pod_name"] = pod
+        record["kubernetes"]["pod_uid"] = uid
+        record["kubernetes"]["container_name"] = container
+        record["kubernetes"]["logfile"] = n
+      end
+
+      return 1, ts, record
+    end

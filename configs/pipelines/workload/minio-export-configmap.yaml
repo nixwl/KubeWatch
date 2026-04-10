@@ -1,0 +1,17 @@
+# minio_export_config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: minio-export-config
+  namespace: database
+data:
+  MINIO_ENDPOINT: "http://minio.database.svc.cluster.local:9000"
+  BUCKET: "k8s-logs"
+  PREFIX: "k8s/nodes"
+
+  NAME_GLOB: "*.gz"
+  DST_DIR: "/export"
+
+  EXPORT_MODE: "utc_day" # utc_day / window
+  DAY_OFFSET_DAYS: "1" # 1=export yesterday (recommended, exports complete day)；0=export today (if the day hasn't ended yet, it will be missing the tail)
+  OUT_DIR_FORMAT: "%Y%m%dT000000Z" # directory name uses UTC timestamp (daily archiving)

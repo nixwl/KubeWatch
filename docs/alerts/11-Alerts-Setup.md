@@ -10,21 +10,21 @@ Source notes:
 
 Related documents:
 
-- [10-MetricsAggregate-Process.md](../metric_preprocess/10-MetricsAggregate-Process.md)
-- [retained-metrics-overview.md](../../templates/markdown/retained-metrics-overview.md)
+- [10-MetricsAggregate-Process.md](../metric/10-MetricsAggregate-Process.md)
+- [retained-metrics-overview.md](../../wiki/retained-metrics-overview.md)
 
 Split YAML references:
 
-- [node-exporter.yaml](../../configs/pipelines/alerts-setup/node-exporter.yaml)
-- [kube-apiservice.yaml](../../configs/pipelines/alerts-setup/kube-apiservice.yaml)
-- [kube-apiserver.yaml](../../configs/pipelines/alerts-setup/kube-apiserver.yaml)
-- [kube-controller-manager.yaml](../../configs/pipelines/alerts-setup/kube-controller-manager.yaml)
-- [kube-scheduler.yaml](../../configs/pipelines/alerts-setup/kube-scheduler.yaml)
-- [kubelet.yaml](../../configs/pipelines/alerts-setup/kubelet.yaml)
-- [kube-proxy.yaml](../../configs/pipelines/alerts-setup/kube-proxy.yaml)
-- [container-and-pod.yaml](../../configs/pipelines/alerts-setup/container-and-pod.yaml)
-- [kube-state-metrics.yaml](../../configs/pipelines/alerts-setup/kube-state-metrics.yaml)
-- [coredns.yaml](../../configs/pipelines/alerts-setup/coredns.yaml)
+- [node-exporter.yaml](../../configs/pipelines/alerts/node-exporter.yaml)
+- [kube-apiservice.yaml](../../configs/pipelines/alerts/kube-apiservice.yaml)
+- [kube-apiserver.yaml](../../configs/pipelines/alerts/kube-apiserver.yaml)
+- [kube-controller-manager.yaml](../../configs/pipelines/alerts/kube-controller-manager.yaml)
+- [kube-scheduler.yaml](../../configs/pipelines/alerts/kube-scheduler.yaml)
+- [kubelet.yaml](../../configs/pipelines/alerts/kubelet.yaml)
+- [kube-proxy.yaml](../../configs/pipelines/alerts/kube-proxy.yaml)
+- [container-and-pod.yaml](../../configs/pipelines/alerts/container-and-pod.yaml)
+- [kube-state-metrics.yaml](../../configs/pipelines/alerts/kube-state-metrics.yaml)
+- [coredns.yaml](../../configs/pipelines/alerts/coredns.yaml)
 
 > These alert rules are intended for lab-scale validation only and have not been verified for effectiveness in a live production environment.
 
@@ -32,7 +32,7 @@ Split YAML references:
 
 Most groups are direct normalizations of the original PrometheusRule YAMLs.
 
-> [node-exporter.yaml](../../configs/pipelines/alerts-setup/node-exporter.yaml).
+> [node-exporter.yaml](../../configs/pipelines/alerts/node-exporter.yaml).
 
 ### 1. Time And Timex Alerts
 
@@ -213,12 +213,12 @@ Most groups are direct normalizations of the original PrometheusRule YAMLs.
 
 Split YAML references:
 
-- [kube-apiservice.yaml](../../configs/pipelines/alerts-setup/kube-apiservice.yaml)
-- [kube-apiserver.yaml](../../configs/pipelines/alerts-setup/kube-apiserver.yaml)
-- [kube-controller-manager.yaml](../../configs/pipelines/alerts-setup/kube-controller-manager.yaml)
-- [kube-scheduler.yaml](../../configs/pipelines/alerts-setup/kube-scheduler.yaml)
-- [kubelet.yaml](../../configs/pipelines/alerts-setup/kubelet.yaml)
-- [kube-proxy.yaml](../../configs/pipelines/alerts-setup/kube-proxy.yaml)
+- [kube-apiservice.yaml](../../configs/pipelines/alerts/kube-apiservice.yaml)
+- [kube-apiserver.yaml](../../configs/pipelines/alerts/kube-apiserver.yaml)
+- [kube-controller-manager.yaml](../../configs/pipelines/alerts/kube-controller-manager.yaml)
+- [kube-scheduler.yaml](../../configs/pipelines/alerts/kube-scheduler.yaml)
+- [kubelet.yaml](../../configs/pipelines/alerts/kubelet.yaml)
+- [kube-proxy.yaml](../../configs/pipelines/alerts/kube-proxy.yaml)
 
 ### 1. APIService Alerts
 

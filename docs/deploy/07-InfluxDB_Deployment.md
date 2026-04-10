@@ -16,7 +16,7 @@ In this guide, we will adopt InfluxDB V2 as our time-series metrics storage solu
 
 ## Install InfluxDB V2 OSS
 
-> InfluxDB is deployed on `edb1`
+InfluxDB is deployed on `edb1`
 
 ### 1. Install influxData Key
 
@@ -45,11 +45,11 @@ systemctl restart influxdb.service
 
 Once the installation is complete, you can access the UI at 192.168.52.8:8086. Configure the following settings:
 
-- User & Password
-- Organization: we set `data-center`
+- User & Password:
+- Organization: `data-center`
 - Initial Bucket: monitor
 
-Next, obtain the Operator API Token first
+Next, obtain the **Operator API Token** first
 
 ## Configure InfluxDB V2
 
@@ -73,7 +73,9 @@ cat /etc/default/influxdb2
 vim /etc/influxdb/config.toml
 ```
 
-Disable metrics-disabled to stop collecting internal metrics, then disable telemetry."
+> [config.toml](../../configs/pipelines/influxdb/config.toml)
+
+Disable metrics-disabled to stop collecting internal metrics, then disable telemetry.
 
 ```toml
 bolt-path = "/var/lib/influxdb/influxd.bolt"
@@ -123,7 +125,9 @@ The core design approach is to replicate data from the full-capacity bucket into
 
 For monitor bucket:
 
-```Flux
+> [monitor_daily.flux](../../configs/pipelines/influxdb/monitor_daily.flux)
+
+```flux
 import "date"
 import "timezone"
 option task = {
@@ -144,23 +148,7 @@ from(bucket: "monitor")
 
 For producer bucket:
 
-```Flux
-import "date"
-import "timezone"
-option task = {
-  name: "producer.daily.schedule",
-  every: 15m,
-  offset: 2m
-}
-
-stop  = date.truncate(t: now(), unit: 15m)
-
-start = date.add(d: -20m, to: stop)
-
-from(bucket: "producer")
-  |> range(start: start, stop: stop)
-  |> to(bucket: "producer.daily", org: "data-center")
-```
+> [producer_daily.flux](../../configs/pipelines/influxdb/producer_daily.flux)
 
 To perform regular data exports, we extract data directly from the daily bucket and save it in CSV format.
 

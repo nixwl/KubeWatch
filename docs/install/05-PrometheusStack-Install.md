@@ -1,6 +1,6 @@
 # Prometheus Stack Install
 
-Deploy `kube-prometheus-stack` on the `monitor` cluster to provide Prometheus, Alertmanager, and Grafana.
+Deploy `kube-prometheus-stack` on the Monitor cluster to provide Prometheus, Alertmanager, and Grafana.
 
 > **This procedure is suitable for a lab or controlled internal environment. <span style="color:red;">It is not written as a hardened production baseline.</span>**
 
@@ -31,27 +31,26 @@ Complete the following first:
 - [Cert-Manager Install](./03-CertManager_Install.md)
 - [Rancher Install](./04-Rancher-Install.md)
 
-Next, configure the storage class by following the [guide](../../docs/deploy/01-NFS_Deployment.md) under the `EXAMPLE: Dynamic Provisioning in K3s` section."
+Next, configure the storage class by following the [guide](../../docs/deploy/01-NFS_Deployment.md) under the `EXAMPLE: Dynamic Provisioning in K3s` section.
 
-related Yaml:
-
-1. [rbac](../../configs/pipelines/prometheus_stack-install/monitor-rbac.yaml)
-2. [provisioner](../../configs/pipelines/prometheus_stack-install/monitor-provisioner.yaml)
-3. [storageclass](../../configs/pipelines/prometheus_stack-install/monitor-storageclass.yaml)
+> **related yaml**:
+>
+> - [monitor-rbac](../../configs/pipelines/prometheus_stack-install/monitor-rbac.yaml)
+> - [monitor-provisioner](../../configs/pipelines/prometheus_stack-install/monitor-provisioner.yaml)
+> - [monitor-storageclass](../../configs/pipelines/prometheus_stack-install/monitor-storageclass.yaml)
 
 ## Install kube-prometheus-stack On Monitor Cluster
 
 ### 1. Add the Helm Repository
 
 ```sh
+# add & search repo
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
 helm search repo prometheus-community/kube-prometheus-stack
 ```
 
 Installing via the Rancher Web UI's Apps & Marketplace and then exporting the values.yaml for modification has proven in our testing to avoid various unexpected issues.
-
-> using namspace: `monitor`
 
 ```sh
 # On Monitor Cluster
@@ -131,7 +130,7 @@ helm upgrade monitor kube-prometheus/kube-prometheus-stack \
 # visit https://alertmanager.example.com
 ```
 
-More configuration details can be found under the alertmanager section in the [`monitor-kube-prometheus-stack-values.yaml`](../../configs/pipelines/prometheus_stack-install/monitor-kube-prometheus-stack-values.yaml) file, which is the configuration file from our initial deployment of the Prometheus monitoring stack on the monitor cluster.
+More configuration details can be found under the alertmanager section in the [monitor-kube-prometheus-stack-values.yaml](../../configs/pipelines/prometheus_stack-install/monitor-kube-prometheus-stack-values.yaml) file, which is the configuration file from our initial deployment of the Prometheus monitoring stack on the monitor cluster.
 
 ### 3. Config Grafana
 
@@ -250,14 +249,17 @@ helm upgrade monitor kube-prometheus/kube-prometheus-stack \
 > **Fixed**:
 >
 > ```sh
+> # For kube-controller
 > kubectl -n kube-system annotate endpoints monitor-kube-prometheus-st-kube-controller-manager \
 >   meta.helm.sh/release-name=monitor \
 >   meta.helm.sh/release-namespace=monitor \
 >   --overwrite
+> # For kube-proxy
 > kubectl -n kube-system annotate endpoints monitor-kube-prometheus-st-kube-proxy \
 >   meta.helm.sh/release-name=monitor \
 >   meta.helm.sh/release-namespace=monitor \
 >   --overwrite
+> # For kube-scheduler
 > kubectl -n kube-system annotate endpoints monitor-kube-prometheus-st-kube-scheduler \
 >   meta.helm.sh/release-name=monitor \
 >   meta.helm.sh/release-namespace=monitor \
@@ -276,29 +278,11 @@ Then, configure some basic settings for Prometheus.
 
 ### 6. Config node-exporter
 
-```Yaml
-prometheus-node-exporter:
-  livenessProbe:
-    failureThreshold: 3
-    httpGet:
-      httpHeaders: []
-      scheme: http
-    initialDelaySeconds: 0
-    periodSeconds: 10
-    successThreshold: 1
-    timeoutSeconds: 1
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-    limits:
-      cpu: 200m
-      memory: 256Mi
-```
+> [monitor-node_exporter_basic.yaml](../../configs/pipelines/prometheus_stack-install/monitor-node_exporter_basic.yaml)
 
 ### 7. Config PrometheusOperator
 
-prometheusOperator is a controller used to manage CRD objects such as Prometheus, Alertmanager, ServiceMonitor, PodMonitor, etc. The Admission Webhook component is used for creating and updating CRD objects within the cluster.
+PrometheusOperator is a controller used to manage CRD objects such as Prometheus, Alertmanager, ServiceMonitor, PodMonitor, etc. The Admission Webhook component is used for creating and updating CRD objects within the cluster.
 
 > [prometheus-operator-basic.yaml](../../configs/pipelines/prometheus_stack-install/monitor-prometheus-operator-basic.yaml)
 
@@ -339,8 +323,6 @@ helm search repo prometheus-community/kube-prometheus-stack
 
 Installing via the Rancher Web UI's Apps & Marketplace and then exporting the values.yaml for modification has proven in our testing to avoid various unexpected issues.
 
-> using namspace: `monitor`
-
 ```sh
 # On Monitor Cluster
 helm list -A | grep kube-prometheus-stack
@@ -352,7 +334,7 @@ helm get values monitor-stack \
 
 ### 3. Modify Configuration
 
-> **To reduce redundant metrics and improve the quality of monitoring metrics, we manually filtered out most of the useless metrics at the collection end.**
+To reduce redundant metrics and improve the quality of monitoring metrics, we manually filtered out most of the useless metrics at the collection end.
 
 Disable the PrometheusRole in the kube-prometheus-stack of the Producer cluster.
 

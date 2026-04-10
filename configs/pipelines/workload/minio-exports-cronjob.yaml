@@ -1,0 +1,200 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: minio-export-daily
+  namespace: database
+spec:
+  timeZone: "Etc/UTC"
+  schedule: "10 0 * * *" # every 00:10 UTC trigger (exporting "yesterday's" directory)
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 3600
+      activeDeadlineSeconds: 3600
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: exporter
+              image: minio/mc:latest
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - configMapRef:
+                    name: minio-export-config
+              env:
+                - name: MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-export
+                      key: MINIO_ACCESS_KEY
+                - name: MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-export
+                      key: MINIO_SECRET_KEY
+                - name: MINIO_SESSION_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-export
+                      key: MINIO_SESSION_TOKEN
+                      optional: true
+                - name: MC_CONFIG_DIR
+                  value: /tmp/.mc
+              volumeMounts:
+                - name: export
+                  mountPath: /export
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  ( set -o pipefail ) 2>/dev/null && set -o pipefail || true
+
+                  # --- date helper (GNU date / BusyBox / BSD fallback) ---
+                  date_utc_at() {
+                    _e="$1"; _f="$2"
+                    if date -u -d "@${_e}" "${_f}" >/dev/null 2>&1; then
+                      date -u -d "@${_e}" "${_f}"; return 0
+                    fi
+                    if date -u -r "${_e}" "${_f}" >/dev/null 2>&1; then
+                      date -u -r "${_e}" "${_f}"; return 0
+                    fi
+                    echo "ERROR: date does not support -d/@epoch or -r" >&2
+                    exit 2
+                  }
+
+                  endpoint="${MINIO_ENDPOINT%/}"
+                  proto="${endpoint%%://*}"
+                  hostport="${endpoint#*://}"
+
+                  # --- inject ephemeral alias exp via env (no mc alias set needed) ---
+                  if [ -n "${MINIO_SESSION_TOKEN:-}" ]; then
+                    export MC_HOST_exp="${proto}://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}:${MINIO_SESSION_TOKEN}@${hostport}"
+                  else
+                    export MC_HOST_exp="${proto}://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@${hostport}"
+                  fi
+
+                  # --- normalize PREFIX (strip leading/trailing '/') ---
+                  PREFIX_CLEAN="${PREFIX:-}"
+                  while [ "${PREFIX_CLEAN#"/"}" != "${PREFIX_CLEAN}" ]; do PREFIX_CLEAN="${PREFIX_CLEAN#"/"}"; done
+                  while [ "${PREFIX_CLEAN%"/"}" != "${PREFIX_CLEAN}" ]; do PREFIX_CLEAN="${PREFIX_CLEAN%"/"}"; done
+
+                  if [ -z "${BUCKET:-}" ]; then
+                    echo "ERROR: BUCKET is empty" >&2
+                    exit 2
+                  fi
+
+                  if [ -z "$PREFIX_CLEAN" ]; then
+                    echo "ERROR: PREFIX is empty. For all-nodes export, set PREFIX like: k8s/nodes" >&2
+                    exit 2
+                  fi
+
+                  # --- compute key-date to export (UTC day) ---
+                  # Default: export yesterday directory (DAY_OFFSET_DAYS=1)
+                  off="${DAY_OFFSET_DAYS:-1}"
+                  now="$(date -u +%s)"
+                  today0=$(( now - (now % 86400) ))
+                  start=$(( today0 - off*86400 ))
+
+                  day_path="$(date_utc_at "$start" '+%Y/%m/%d')"                       # e.g. 2026/01/18
+                  day_dir="$(date_utc_at "$start" "+${OUT_DIR_FORMAT:-%Y%m%dT000000Z}")"
+
+                  # --- base paths ---
+                  BASE="exp/${BUCKET}/${PREFIX_CLEAN}"                                # e.g. exp/k8s-logs/k8s/nodes
+                  OUT="${DST_DIR%/}/${day_dir}"
+                  mkdir -p "$OUT"
+
+                  echo "[info] base=$BASE"
+                  echo "[info] key_date=$day_path (UTC, DAY_OFFSET_DAYS=$off)"
+                  echo "[info] name=${NAME_GLOB:-*}"
+                  echo "[info] out=$OUT"
+
+                  # --- enumerate node "directories" under BASE ---
+                  nodes_tmp="/tmp/nodes.txt"
+                  mc ls "${BASE}/" > "$nodes_tmp" 2>/dev/null || true
+
+                  if [ ! -s "$nodes_tmp" ]; then
+                    echo "ERROR: cannot list ${BASE}/ . Check PREFIX, BUCKET, permissions." >&2
+                    exit 2
+                  fi
+
+                  objects="/tmp/objects.txt"
+                  : > "$objects"
+
+                  # Parse last field without awk (minio/mc image is minimal)
+                  while IFS= read -r line; do
+                    name=""
+                    for w in $line; do
+                      name="$w"
+                    done
+
+                    case "$name" in
+                      */)
+                        node="${name%/}"
+                        src_node="${BASE}/${node}/${day_path}/"
+                        echo "[scan] $src_node"
+                        mc find "$src_node" --name "${NAME_GLOB:-*}" >> "$objects" 2>/dev/null || true
+                        ;;
+                      *)
+                        ;;
+                    esac
+                  done < "$nodes_tmp"
+
+                  N="$(wc -l < "$objects" | tr -d ' ' || echo 0)"
+                  echo "[select] objects=$N"
+                  if [ "$N" = "0" ]; then
+                    echo "No objects selected."
+                    echo "Check:"
+                    echo "  - Is key_date directory present under each node? (example: ${BASE}/<node>/${day_path}/)"
+                    echo "  - NAME_GLOB (try '*')"
+                    exit 0
+                  fi
+
+                  STRIP="exp/${BUCKET}/"
+                  i=0
+                  skipped=0
+                  while IFS= read -r obj; do
+                    [ -z "$obj" ] && continue
+
+                    rel="${obj#"$STRIP"}"
+                    dst="${OUT}/${rel}"
+                    dstdir="$(dirname "$dst")"
+                    mkdir -p "$dstdir"
+
+                    # mc cp in this image does NOT support --force; implement safe idempotency:
+                    # if file already exists locally, skip it.
+                    if [ -f "$dst" ]; then
+                      skipped=$((skipped+1))
+                      continue
+                    fi
+
+                    mc cp -q "$obj" "$dst"
+
+                    i=$((i+1))
+                    if [ $(( (i+skipped) % 50 )) -eq 0 ]; then
+                      echo "[cp] copied=$i skipped=$skipped total=$N ..."
+                    fi
+                  done < "$objects"
+
+                  echo "[done] output_root=$OUT"
+                  echo "       copied=$i skipped=$skipped total=$N"
+
+                  # NOTE: minio/mc image may not include 'find'. Use 'ls' as a lightweight verification.
+                  echo "       sample (top-level):"
+                  ls -lah "$OUT" | head -n 50 || true
+
+                  echo "       sample (one level deep):"
+                  for d in "$OUT"/*; do
+                    [ -d "$d" ] || continue
+                    echo "---- $d"
+                    ls -lah "$d" | head -n 20 || true
+                    break
+                  done
+          volumes:
+            - name: export
+              persistentVolumeClaim:
+                claimName: logs-export-pvc

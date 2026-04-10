@@ -1,0 +1,12 @@
+docker.io/library/nginx:1.27
+docker.io/library/redis:7.2
+docker.io/library/nginx:1.27-alpine
+docker.io/library/redis:7.2-alpine
+docker.io/library/busybox:1.36
+docker.io/library/alpine:3.18
+docker.io/library/debian:12-slim
+docker.io/library/httpd:2.4-alpine
+docker.io/library/registry:2
+docker.io/curlimages/curl:8.10.1
+ghcr.io/nicolaka/netshoot:v0.12
+ghcr.io/grafana/k6:latest

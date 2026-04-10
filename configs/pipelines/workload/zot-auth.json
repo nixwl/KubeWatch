@@ -1,0 +1,10 @@
+{
+	"auths": {
+		"docker.io": {
+			"auth": "xxxx"
+		},
+		"zot.example.com": {
+			"auth": "YWRtaW46YWRtaW4="
+		}
+	}
+}

@@ -117,7 +117,6 @@ $INFLUX_TOKEN needs to be injected via a secretKeyRef.
 
 ```sh
 kubectl -n monitor create secret generic remoterw-token --from-literal=INFLUX_TOKEN='<your_token>'
-
 ```
 
 ```Yaml

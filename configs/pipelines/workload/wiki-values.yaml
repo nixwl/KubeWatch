@@ -1,0 +1,114 @@
+# Default values for wiki.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+revisionHistoryLimit: 10
+
+image:
+  repository: requarks/wiki
+  imagePullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name:
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+
+startupProbe:
+  initialDelaySeconds: 15
+  periodSeconds: 5
+  timeoutSeconds: 5
+  successThreshold: 1
+  failureThreshold: 60
+  httpGet:
+    path: /healthz
+    port: http
+
+podAnnotations: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: "traefik"
+  annotations:
+    cert-manager.io/cluster-issuer: producer-ca-issuer
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  hosts:
+    - host: wiki.example.com
+      paths:
+        - path: "/"
+          pathType: Prefix
+  tls:
+    - secretName: wiki-general-tls
+      hosts:
+        - wiki.example.com
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+nodeSelector:
+  node-role: worker
+
+tolerations: []
+
+affinity: {}
+
+volumeMounts: []
+
+volumes: []
+
+# This will allow us to install locales even without internet access using a initContainer & Wiki.js "sideloading"
+sideload:
+  enabled: false
+  repoURL: https://github.com/Requarks/wiki-localization
+  env: []
+  securityContext: {}
+  resources: {}
+
+## Additional environment variables to set
+extraEnvVars: []
+
+postgresql:
+  enabled: false
+  postgresqlHost: "pg-postgresql-primary.database.svc.cluster.local"
+  postgresqlPort: 5432
+
+  fullnameOverride: ""
+  postgresqlUser: wiki
+  postgresqlDatabase: wiki
+  existingSecret: "postgresql-wiki-secret"
+  existingSecretKey: "DB_PASS"
+  ssl: false
+
+  replication:
+    enabled: false
+  persistence:
+    enabled: false
+    accessMode: ReadWriteOnce
+    size: 8Gi

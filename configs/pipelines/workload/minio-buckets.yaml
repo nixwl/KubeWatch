@@ -1,0 +1,47 @@
+# minio-config-k8s-logs.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-config-k8s-logs
+  namespace: database
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        node-role: worker
+      containers:
+        - name: mc
+          image: bitnamilegacy/minio-client:2025.7.21-debian-12-r2
+          env:
+            - name: SVC
+              value: "minio"
+            - name: BUCKET
+              value: "k8s-logs"
+            - name: ROOT_USER
+              valueFrom: { secretKeyRef: { name: minio-auth, key: rootUser } }
+            - name: ROOT_PASS
+              valueFrom:
+                { secretKeyRef: { name: minio-auth, key: rootPassword } }
+            - name: EXPIRE_DAYS
+              value: "10"
+            - name: NONCURRENT_EXPIRE_DAYS
+              value: "7"
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              mc alias set local "http://$SVC:9000" "$ROOT_USER" "$ROOT_PASS"
+
+              # 1) ensure bucket exists (idempotent)
+              mc mb -p "local/$BUCKET" || true
+
+              # 2) enforce versioning (idempotent)
+              mc version enable "local/$BUCKET" || true
+              # 3) ILM: current versions expire; old versions expire; delete markers cleanup
+              mc ilm rule add --expire-days "$EXPIRE_DAYS" --noncurrent-expire-days "$NONCURRENT_EXPIRE_DAYS" "local/$BUCKET" || true
+              mc ilm rule add --expire-delete-marker "local/$BUCKET" || true
+              # 4) show result
+              mc version info "local/$BUCKET" || true
+              mc ilm rule ls "local/$BUCKET" || true

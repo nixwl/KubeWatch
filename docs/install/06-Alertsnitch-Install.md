@@ -76,8 +76,12 @@ wget https://raw.githubusercontent.com/yakshaving-art/alertsnitch/master/db.d/my
 
 Then, create the database and initialize it using the SQL script.
 
-```sql
+```sh
+# login with root
 mysql -u root -p
+```
+
+```sql
 -- create database
 CREATE DATABASE alertsnitch CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 -- create user
@@ -94,8 +98,7 @@ mysql -u root -p alertsnitch < ./0.0.1-bootstrap.sql
 mysql -u root -p alertsnitch < ./0.1.0-fingerprint.sql
 ```
 
-> A complete script can handle the entire process described above.
-> [init-database.sh](../../scripts/pipelines/alertsnitch-install/init-database.sh)
+A [complete script](../../scripts/pipelines/alertsnitch-install/init-database.sh) can handle the entire process described above.
 
 ### 2. Install Alertsnitch On Monitor Cluster
 

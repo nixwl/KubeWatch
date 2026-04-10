@@ -12,7 +12,7 @@ The source notes assume the following example environment:
 
 - DNS server: `dns1` (`192.168.52.10`)
 - Upstream DNS server: `192.168.52.2`
-- Example internal records: `192.168.52.7 video.traefik.com`, `192.168.52.9 rancher.example.com`
+- Example internal records: `192.168.52.9 rancher.example.com`
 
 ## Install CoreDNS
 
@@ -69,7 +69,7 @@ systemctl status coredns
 ```
 
 <p align="center">
-  <img src="../assets/images/kubernetes-deployment/coredns_netplan.png" coredns_netplan" width="300"><br>
+  <img src="../../assets/images/kubernetes-deployment/coredns_netplan.png" coredns_netplan" width="300"><br>
   <em>coredns_netplan</em>
  </p>
 
