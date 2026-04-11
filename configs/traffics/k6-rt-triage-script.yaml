@@ -1,0 +1,227 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-triage-script
+  namespace: traffic
+data:
+  triage.js: |-
+    import http from "k6/http";
+    import { check, fail, sleep } from "k6";
+    import { SharedArray } from "k6/data";
+
+    const BASE_URL = __ENV.BASE_URL;
+    const INSECURE_TLS = (__ENV.INSECURE_TLS || "true").toLowerCase() === "true";
+    const RT_QUEUE = __ENV.RT_QUEUE || "Traffic";
+
+    const VUS = parseInt(__ENV.VUS || "6", 10);
+    const DURATION = __ENV.DURATION || "10m";
+    const SLEEP_MIN = parseFloat(__ENV.SLEEP_MIN || "0.1");
+    const SLEEP_MAX = parseFloat(__ENV.SLEEP_MAX || "0.6");
+
+    const STAFF_PICK_MODE = (__ENV.STAFF_PICK_MODE || "roundrobin").toLowerCase();
+    const DO_DEEP_READ = (__ENV.DO_DEEP_READ || "true").toLowerCase() === "true";
+    const HISTORY_RATIO = parseFloat(__ENV.HISTORY_RATIO || "0.7");
+
+    const QUEUES_ALL_EVERY_N = parseInt(__ENV.QUEUES_ALL_EVERY_N || "0", 10);
+
+    // Default ordering (used when the template does not include ORDER BY)
+    const DEFAULT_ORDERBY = (__ENV.DEFAULT_ORDERBY || "LastUpdated").trim();
+    const DEFAULT_ORDER = (__ENV.DEFAULT_ORDER || "DESC").trim().toUpperCase();
+
+    // Pagination
+    const PER_PAGE = parseInt(__ENV.PER_PAGE || "20", 10);
+
+    const TICKETSQL_TEMPLATES = (() => {
+      try { return JSON.parse(__ENV.TICKETSQL_TEMPLATES || "[]"); }
+      catch (e) { return []; }
+    })();
+
+    // =========================
+    // Thresholds from ENV ✅
+    // =========================
+    function envBool(k, defVal) {
+      const v = (__ENV[k] ?? String(defVal)).toString().toLowerCase();
+      return v === "true" || v === "1" || v === "yes" || v === "y";
+    }
+    function envFloat(k, defVal) {
+      const v = parseFloat(__ENV[k]);
+      return Number.isFinite(v) ? v : defVal;
+    }
+    function envInt(k, defVal) {
+      const v = parseInt(__ENV[k], 10);
+      return Number.isFinite(v) ? v : defVal;
+    }
+
+    const TH_ENABLE = envBool("TH_ENABLE", true);
+
+    // Global thresholds (same defaults as before)
+    const TH_FAIL_RATE_MAX = envFloat("TH_FAIL_RATE_MAX", 0.01);
+    const TH_P95_MS_MAX = envInt("TH_P95_MS_MAX", 3000);
+
+    // Optional: op-specific thresholds (0 = disabled)
+    const TH_SEARCH_P95_MS = envInt("TH_SEARCH_P95_MS", 0); // tickets_search
+    const TH_GET_P95_MS    = envInt("TH_GET_P95_MS", 0);    // ticket_get
+    const TH_HIST_P95_MS   = envInt("TH_HIST_P95_MS", 0);   // ticket_history
+    const TH_QUEUES_P95_MS = envInt("TH_QUEUES_P95_MS", 0); // queues_all
+
+    function buildThresholds() {
+      if (!TH_ENABLE) return {};
+
+      const t = {
+        http_req_failed:   [`rate<${TH_FAIL_RATE_MAX}`],
+        http_req_duration: [`p(95)<${TH_P95_MS_MAX}`],
+      };
+
+      // Per-op thresholds (based on tags: op=xxx)
+      if (TH_SEARCH_P95_MS > 0) t[`http_req_duration{op:tickets_search}`] = [`p(95)<${TH_SEARCH_P95_MS}`];
+      if (TH_GET_P95_MS > 0)    t[`http_req_duration{op:ticket_get}`]     = [`p(95)<${TH_GET_P95_MS}`];
+      if (TH_HIST_P95_MS > 0)   t[`http_req_duration{op:ticket_history}`] = [`p(95)<${TH_HIST_P95_MS}`];
+      if (TH_QUEUES_P95_MS > 0) t[`http_req_duration{op:queues_all}`]     = [`p(95)<${TH_QUEUES_P95_MS}`];
+
+      return t;
+    }
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      vus: VUS,
+      duration: DURATION,
+      thresholds: buildThresholds(),
+    };
+
+    // SharedArray only accepts arrays; wrap users.json (an object) in an array and take [0]
+    const USERS = new SharedArray("users", () => [JSON.parse(open("./data/users.json"))])[0];
+
+    function must(res, name) {
+      const ok = check(res, { [`${name} status`]: (r) => r.status >= 200 && r.status < 400 });
+      if (!ok) {
+        fail(`${name} failed: status=${res.status} body=${(res.body || "").slice(0, 400)}`);
+      }
+    }
+
+    function j(res) {
+      try { return res.json(); } catch (e) { return null; }
+    }
+
+    function hdr(token, tags) {
+      return {
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `token ${token}`,
+        },
+        tags: tags || {},
+      };
+    }
+
+    function pickStaff() {
+      const arr = USERS.staffs;
+      if (!arr || arr.length === 0) fail("empty staffs pool in users.json");
+
+      if (STAFF_PICK_MODE === "random") {
+        return arr[Math.floor(Math.random() * arr.length)];
+      }
+      // roundrobin: map each VU to a fixed staff to reduce identity-switching noise
+      return arr[(__VU - 1) % arr.length];
+    }
+
+    // Support both return shapes: items[*]._url or items[*].id
+    function extractTicketIds(items) {
+      const ids = [];
+      for (const it of (items || [])) {
+        if (it && typeof it.id === "number") {
+          ids.push(it.id);
+          continue;
+        }
+        const u = it && it._url ? String(it._url) : "";
+        const m = u.match(/\/ticket\/(\d+)\b/);
+        if (m) ids.push(parseInt(m[1], 10));
+      }
+      return ids;
+    }
+
+    function randBetween(a, b) {
+      return a + Math.random() * (b - a);
+    }
+
+    /**
+     * Extract ORDER BY from the TicketSQL template if present
+     * Note: RT REST2 query= does not accept ORDER BY; sorting should use the orderby/order parameters
+     */
+    function splitQueryAndOrder(tpl) {
+      const raw = String(tpl || "").trim().replace(/\{\{QUEUE\}\}/g, RT_QUEUE);
+
+      // Only handle the trailing form: ... ORDER BY LastUpdated DESC
+      const re = /\s+ORDER\s+BY\s+([A-Za-z_][\w.]*)\s+(ASC|DESC)\s*$/i;
+      const m = raw.match(re);
+
+      if (m) {
+        const idx = raw.toUpperCase().lastIndexOf("ORDER BY");
+        return {
+          query: raw.slice(0, idx).trim(),
+          orderby: m[1],
+          order: m[2].toUpperCase(),
+        };
+      }
+      return { query: raw, orderby: DEFAULT_ORDERBY, order: DEFAULT_ORDER };
+    }
+
+    export default function () {
+      if (!BASE_URL) fail("BASE_URL is required");
+      if (!TICKETSQL_TEMPLATES || TICKETSQL_TEMPLATES.length === 0) {
+        fail("TICKETSQL_TEMPLATES must be a non-empty JSON array string in env ConfigMap");
+      }
+
+      const staff = pickStaff();
+
+      // Optional: occasionally fetch the queue list (simulates UI initialization / switching)
+      if (QUEUES_ALL_EVERY_N > 0 && (__ITER % QUEUES_ALL_EVERY_N === 0)) {
+        const r0 = http.get(
+          `${BASE_URL}/REST/2.0/queues/all`,
+          hdr(staff.token, { scenario: "triage", role: "staff", op: "queues_all" })
+        );
+        must(r0, "GET /queues/all");
+      }
+
+      // 1) TicketSQL search (rotating templates)
+      const tpl = TICKETSQL_TEMPLATES[Math.floor(Math.random() * TICKETSQL_TEMPLATES.length)];
+      const qinfo = splitQueryAndOrder(tpl);
+
+      const r1 = http.get(
+        `${BASE_URL}/REST/2.0/tickets?query=${encodeURIComponent(qinfo.query)}&orderby=${encodeURIComponent(qinfo.orderby)}&order=${encodeURIComponent(qinfo.order)}&per_page=${PER_PAGE}`,
+        hdr(staff.token, { scenario: "triage", role: "staff", op: "tickets_search", queue: RT_QUEUE })
+      );
+      must(r1, "GET /tickets?query");
+
+      const s = j(r1);
+      const ids = extractTicketIds(s && s.items);
+
+      // Empty search results are normal (queue empty or query too narrow); end this round
+      if (!ids || ids.length === 0) {
+        sleep(randBetween(SLEEP_MIN, SLEEP_MAX));
+        return;
+      }
+
+      if (!DO_DEEP_READ) {
+        sleep(randBetween(SLEEP_MIN, SLEEP_MAX));
+        return;
+      }
+
+      // 2) Deep read: randomly choose one ticket and read its details
+      const id = ids[Math.floor(Math.random() * ids.length)];
+      const r2 = http.get(
+        `${BASE_URL}/REST/2.0/ticket/${id}`,
+        hdr(staff.token, { scenario: "triage", role: "staff", op: "ticket_get", queue: RT_QUEUE })
+      );
+      must(r2, "GET /ticket/:id");
+
+      // 3) Read history by ratio (deeper-read path)
+      if (Math.random() < HISTORY_RATIO) {
+        const r3 = http.get(
+          `${BASE_URL}/REST/2.0/ticket/${id}/history`,
+          hdr(staff.token, { scenario: "triage", role: "staff", op: "ticket_history", queue: RT_QUEUE })
+        );
+        must(r3, "GET /ticket/:id/history");
+      }
+
+      sleep(randBetween(SLEEP_MIN, SLEEP_MAX));
+    }

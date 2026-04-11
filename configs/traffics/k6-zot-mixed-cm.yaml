@@ -1,0 +1,454 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-zot-mixed
+  namespace: traffic
+data:
+  repo-spec.json: |
+    {
+      "defaults": {
+        "discoverTags": true,
+        "requireTags": true,
+        "tagsListN": 200
+      },
+      "pull": [
+        { "repo": "mirror/docker.io/library/nginx",   "weight": 2 },
+        { "repo": "mirror/docker.io/library/redis",   "weight": 2 },
+        { "repo": "mirror/docker.io/library/alpine",  "weight": 2 },
+        { "repo": "mirror/docker.io/library/busybox", "weight": 2 },
+        { "repo": "mirror/docker.io/library/debian",  "weight": 2 },
+        { "repo": "mirror/docker.io/library/httpd",   "weight": 2 },
+        { "repo": "mirror/ghcr.io/grafana/k6",        "weight": 2 }
+      ],
+      "browse": [
+        { "repo": "mirror/docker.io/library/nginx",   "weight": 2 },
+        { "repo": "mirror/docker.io/library/redis",   "weight": 2 },
+        { "repo": "mirror/docker.io/library/alpine",  "weight": 2 },
+        { "repo": "mirror/docker.io/library/busybox", "weight": 2 },
+        { "repo": "mirror/docker.io/library/debian",  "weight": 2 },
+        { "repo": "mirror/docker.io/library/httpd",   "weight": 2 },
+        { "repo": "mirror/ghcr.io/grafana/k6",        "weight": 2 }
+      ],
+      "catalog": []
+    }
+
+  mixed.js: |
+    import http from "k6/http";
+    import { check } from "k6";
+
+    import {
+      baseUrl,
+      authHeaders,
+      v2Ping,
+      think,
+      envStr,
+      envNum,
+      envBool,
+      loadReposFromEnvOrDefault,
+    } from "./lib.js";
+
+    import { doManifest } from "./manifest.js";
+    import { doBlobs } from "./blobs.js";
+
+    // =========================
+    // Spec loader (init context)
+    // =========================
+    function safeJSON(s) { try { return JSON.parse(s); } catch (_) { return null; } }
+
+    function loadRepoSpec() {
+      const inline = envStr("REPO_SPEC_JSON", "");
+      if (inline) {
+        const j = safeJSON(inline);
+        if (j) return j;
+      }
+      const f = envStr("REPO_SPEC_FILE", "repo-spec.json");
+      try {
+        const p = (f.startsWith("/") ? f : `./${f}`);
+        const txt = open(p);
+        const j = safeJSON(txt);
+        if (j) return j;
+      } catch (_) {}
+      return null;
+    }
+
+    const SPEC = loadRepoSpec();
+
+    // =========================
+    // Helpers
+    // =========================
+    function shuffle(arr) {
+      const a = arr.slice();
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    function pick(arr) {
+      return arr[Math.floor(Math.random() * arr.length)];
+    }
+
+    function weightedPick(items) {
+      const sum = items.reduce((s, it) => s + (Number(it.weight) || 1), 0);
+      let r = Math.random() * Math.max(sum, 1);
+      for (const it of items) {
+        r -= (Number(it.weight) || 1);
+        if (r <= 0) return it;
+      }
+      return items[items.length - 1];
+    }
+
+    function tagsListOnceN(repo, n, opTag) {
+      const url = `${baseUrl()}/v2/${repo}/tags/list?n=${n}`;
+      const r = http.get(url, {
+        headers: authHeaders({ Accept: "application/json" }),
+        responseType: "text",
+        tags: { op: opTag || "tags_list", repo },
+        timeout: "60s",
+      });
+      check(r, { "tags/list status ok": (res) => [200, 401, 403, 404].includes(res.status) });
+      if (r.status !== 200) return null;
+
+      try {
+        const j = JSON.parse(r.body);
+        if (Array.isArray(j.tags) && j.tags.length > 0) return j.tags;
+      } catch (_) {}
+      return null;
+    }
+
+    function catalogOnceN(n, opTag) {
+      const url = `${baseUrl()}/v2/_catalog?n=${n}`;
+      const r = http.get(url, {
+        headers: authHeaders({ Accept: "application/json" }),
+        responseType: "text",
+        tags: { op: opTag || "catalog" },
+        timeout: "60s",
+      });
+      check(r, { "catalog ok(200/404)": (res) => res.status === 200 || res.status === 404 });
+      if (r.status !== 200) return null;
+
+      try {
+        const j = JSON.parse(r.body);
+        if (Array.isArray(j.repositories) && j.repositories.length > 0) return j.repositories;
+      } catch (_) {}
+      return null;
+    }
+
+    function normalizePool(pool) {
+      const out = [];
+      for (const it of (pool || [])) {
+        if (!it) continue;
+        if (typeof it === "string") {
+          out.push({ repo: it, weight: 1 });
+        } else if (typeof it === "object" && it.repo) {
+          out.push({
+            repo: String(it.repo),
+            weight: Number(it.weight) || 1,
+            tags: Array.isArray(it.tags) ? it.tags.map(String) : null,
+            discoverTags: (it.discoverTags !== undefined) ? Boolean(it.discoverTags) : undefined,
+            tagsListN: (it.tagsListN !== undefined) ? Number(it.tagsListN) : undefined,
+            allowTagRegex: (it.allowTagRegex !== undefined) ? String(it.allowTagRegex) : undefined,
+            denyTagRegex: (it.denyTagRegex !== undefined) ? String(it.denyTagRegex) : undefined,
+          });
+        }
+      }
+      return out;
+    }
+
+    function applyRepoFilters(items) {
+      const allow = envStr("REPO_ALLOW_REGEX", "");
+      const deny  = envStr("REPO_DENY_REGEX", "");
+      const allowRe = allow ? new RegExp(allow) : null;
+      const denyRe  = deny  ? new RegExp(deny)  : null;
+
+      let x = items;
+      if (allowRe) x = x.filter(it => allowRe.test(it.repo));
+      if (denyRe)  x = x.filter(it => !denyRe.test(it.repo));
+      return x;
+    }
+
+    function limitAndShuffle(items, maxN) {
+      const doShuffle = envBool("SHUFFLE_REPOS", true);
+      const arr = doShuffle ? shuffle(items) : items.slice();
+      return arr.slice(0, Math.max(1, maxN));
+    }
+
+    function buildScenarioEnv(prefix, fallback = {}) {
+      const e = {
+        THINK_MIN: envStr(`${prefix}_THINK_MIN`, fallback.THINK_MIN || envStr("THINK_MIN", "0.05")),
+        THINK_MAX: envStr(`${prefix}_THINK_MAX`, fallback.THINK_MAX || envStr("THINK_MAX", "0.25")),
+
+        MANIFEST_GET_PCT: envStr(`${prefix}_MANIFEST_GET_PCT`, fallback.MANIFEST_GET_PCT || envStr("MANIFEST_GET_PCT", "90")),
+
+        TAGS_LIST_N: envStr(`${prefix}_TAGS_LIST_N`, fallback.TAGS_LIST_N || envStr("TAGS_LIST_N", "200")),
+
+        MAX_CATALOG_N: envStr(`${prefix}_MAX_CATALOG_N`, fallback.MAX_CATALOG_N || envStr("MAX_CATALOG_N", "1000")),
+
+        BLOB_GET_PCT: envStr(`${prefix}_BLOB_GET_PCT`, fallback.BLOB_GET_PCT || envStr("BLOB_GET_PCT", "80")),
+        BLOB_PARALLELISM: envStr(`${prefix}_BLOB_PARALLELISM`, fallback.BLOB_PARALLELISM || envStr("BLOB_PARALLELISM", "2")),
+        PULL_FULL_PCT: envStr(`${prefix}_FULL_PCT`, fallback.PULL_FULL_PCT || envStr("PULL_FULL_PCT", "5")),
+        LAYER_SAMPLE_MIN: envStr(`${prefix}_LAYER_SAMPLE_MIN`, fallback.LAYER_SAMPLE_MIN || envStr("LAYER_SAMPLE_MIN", "1")),
+        LAYER_SAMPLE_MAX: envStr(`${prefix}_LAYER_SAMPLE_MAX`, fallback.LAYER_SAMPLE_MAX || envStr("LAYER_SAMPLE_MAX", "3")),
+      };
+      return e;
+    }
+
+    // =========================
+    // constant-vus only (init)
+    // =========================
+    const DURATION = envStr("DURATION", "15m");
+
+    // Fixed VUs per scenario: set to 0 to disable a scenario
+    const PULL_VUS   = envNum("PULL_VUS", 3);
+    const BROWSE_VUS = envNum("BROWSE_VUS", 1);
+    const CAT_VUS    = envNum("CATALOG_VUS", 1);
+
+    const HTTP_REQ_FAILED = envNum("HTTP_REQ_FAILED", 0.01);
+    const HTTP_REQ_P95_MS = envNum("HTTP_REQ_P95_MS", 1200);
+
+    function buildScenarios() {
+      const sc = {};
+
+      if (PULL_VUS > 0) {
+        sc.pull = {
+          executor: "constant-vus",
+          vus: PULL_VUS,
+          duration: DURATION,
+          gracefulStop: "30s",
+          exec: "pullScenario",
+          tags: { scenario: "pull" },
+          env: buildScenarioEnv("PULL"),
+        };
+      }
+
+      if (BROWSE_VUS > 0) {
+        sc.browse = {
+          executor: "constant-vus",
+          vus: BROWSE_VUS,
+          duration: DURATION,
+          gracefulStop: "30s",
+          exec: "browseScenario",
+          tags: { scenario: "browse" },
+          env: buildScenarioEnv("BROWSE"),
+        };
+      }
+
+      if (CAT_VUS > 0) {
+        sc.catalog = {
+          executor: "constant-vus",
+          vus: CAT_VUS,
+          duration: DURATION,
+          gracefulStop: "30s",
+          exec: "catalogScenario",
+          tags: { scenario: "catalog" },
+          env: buildScenarioEnv("CATALOG"),
+        };
+      }
+
+      // Fallback: prevent k6 from having no scenario when all values are 0
+      if (Object.keys(sc).length === 0) {
+        sc.default = {
+          executor: "constant-vus",
+          vus: 1,
+          duration: DURATION,
+          gracefulStop: "30s",
+          exec: "default",
+          tags: { scenario: "default" },
+        };
+      }
+
+      return sc;
+    }
+
+    export const options = {
+      insecureSkipTLSVerify: envBool("INSECURE_TLS", true),
+      discardResponseBodies: true,
+      thresholds: {
+        http_req_failed: [`rate<${HTTP_REQ_FAILED}`],
+        http_req_duration: [`p(95)<${HTTP_REQ_P95_MS}`],
+      },
+      scenarios: buildScenarios(),
+    };
+
+    // =========================
+    // setup(): build repo pools + tag map
+    // =========================
+    export function setup() {
+      let pullPool = [];
+      let browsePool = [];
+      let catalogPool = [];
+
+      if (SPEC && typeof SPEC === "object") {
+        pullPool = normalizePool(SPEC.pull || SPEC.repos || []);
+        browsePool = normalizePool(SPEC.browse || []);
+        catalogPool = normalizePool(SPEC.catalog || []);
+      } else {
+        const repos = loadReposFromEnvOrDefault();
+        pullPool = repos.map(r => ({ repo: r, weight: 1 }));
+        browsePool = [];
+        catalogPool = [];
+      }
+
+      if (!browsePool || browsePool.length === 0) browsePool = pullPool.slice();
+      if (!catalogPool || catalogPool.length === 0) catalogPool = pullPool.slice();
+
+      if (envBool("DISCOVER_REPOS", false)) {
+        const n = envNum("DISCOVER_CATALOG_N", 1000);
+        const repos = catalogOnceN(n, "catalog_setup") || [];
+        if (repos.length > 0) {
+          const discovered = repos.map(r => ({ repo: r, weight: 1 }));
+          pullPool = discovered.concat(pullPool);
+          browsePool = discovered.concat(browsePool);
+          catalogPool = discovered.concat(catalogPool);
+        }
+      }
+
+      pullPool = applyRepoFilters(pullPool);
+      browsePool = applyRepoFilters(browsePool);
+      catalogPool = applyRepoFilters(catalogPool);
+
+      pullPool = limitAndShuffle(pullPool, envNum("PULL_MAX_REPOS", envNum("MAX_REPOS", 50)));
+      browsePool = limitAndShuffle(browsePool, envNum("BROWSE_MAX_REPOS", envNum("MAX_REPOS", 50)));
+      catalogPool = limitAndShuffle(catalogPool, envNum("CATALOG_MAX_REPOS", envNum("MAX_REPOS", 50)));
+
+      const defaults = (SPEC && SPEC.defaults && typeof SPEC.defaults === "object") ? SPEC.defaults : {};
+      const requireTags = (defaults.requireTags !== undefined) ? Boolean(defaults.requireTags) : envBool("REQUIRE_TAGS", true);
+      const discoverTagsDefault = (defaults.discoverTags !== undefined) ? Boolean(defaults.discoverTags) : envBool("DISCOVER_TAGS", true);
+
+      const setupTagsN = envNum("SETUP_TAGS_LIST_N", (defaults.tagsListN !== undefined) ? Number(defaults.tagsListN) : 200);
+      const allowSeed = envBool("ALLOW_SEED_TAGS", true);
+
+      const tagByRepo = {};
+      const allRepos = {};
+      for (const it of pullPool.concat(browsePool)) allRepos[it.repo] = it;
+      const uniqueRepos = Object.keys(allRepos);
+
+      for (const repo of uniqueRepos) {
+        const it = allRepos[repo] || { repo, weight: 1 };
+        const discoverTags = (it.discoverTags !== undefined) ? it.discoverTags : discoverTagsDefault;
+        const listN = (it.tagsListN !== undefined) ? it.tagsListN : setupTagsN;
+
+        let tags = null;
+
+        if (discoverTags) {
+          tags = tagsListOnceN(repo, listN, "tags_list_setup");
+        }
+
+        if (!tags || tags.length === 0) {
+          if (allowSeed && it.tags && it.tags.length > 0) tags = it.tags;
+        }
+
+        const allowReStr = (it.allowTagRegex !== undefined) ? it.allowTagRegex : (defaults.allowTagRegex || "");
+        const denyReStr  = (it.denyTagRegex  !== undefined) ? it.denyTagRegex  : (defaults.denyTagRegex  || "");
+        const allowRe = allowReStr ? new RegExp(allowReStr) : null;
+        const denyRe  = denyReStr  ? new RegExp(denyReStr)  : null;
+
+        let finalTags = (tags && tags.length > 0) ? tags.slice() : [];
+        if (allowRe) finalTags = finalTags.filter(t => allowRe.test(t));
+        if (denyRe)  finalTags = finalTags.filter(t => !denyRe.test(t));
+
+        tagByRepo[repo] = finalTags;
+      }
+
+      const filterByTags = (pool) => pool.filter(it => (tagByRepo[it.repo] || []).length > 0);
+      const pullFiltered = requireTags ? filterByTags(pullPool) : pullPool;
+      const browseFiltered = requireTags ? filterByTags(browsePool) : browsePool;
+
+      pullPool = (pullFiltered.length > 0) ? pullFiltered : pullPool;
+      browsePool = (browseFiltered.length > 0) ? browseFiltered : browsePool;
+
+      return {
+        pullPool,
+        browsePool,
+        catalogPool,
+        tagByRepo,
+      };
+    }
+
+    // =========================
+    // Scenarios
+    // =========================
+    export function catalogScenario(data) {
+      v2Ping();
+      const n = envNum("CATALOG_MAX_CATALOG_N", envNum("MAX_CATALOG_N", 1000));
+      catalogOnceN(n, "catalog");
+      think();
+    }
+
+    export function browseScenario(data) {
+      v2Ping();
+
+      const repoIt = weightedPick(data.browsePool);
+      const repo = repoIt.repo;
+
+      // Browse behaves more like a UI: allow tags/list refresh with a probability
+      const pct = envNum("BROWSE_TAGS_LIST_PCT", 30);
+      if (Math.random() * 100 < pct) {
+        const n = envNum("BROWSE_TAGS_LIST_N", envNum("TAGS_LIST_N", 200));
+        const tags = tagsListOnceN(repo, n, "tags_list_browse");
+        if (tags && tags.length > 0) data.tagByRepo[repo] = tags;
+      }
+
+      const tags = data.tagByRepo[repo] || [];
+      if (tags.length === 0) {
+        think();
+        return;
+      }
+
+      const retry = envNum("BROWSE_TAG_RETRY", 2);
+      for (let i = 0; i < retry; i++) {
+        const tag = pick(tags);
+        doManifest(repo, tag);
+        break;
+      }
+
+      think();
+    }
+
+    function maybeCatalogNoise() {
+      const pct = envNum("PULL_CATALOG_PCT", envNum("CATALOG_PCT", 0));
+      if (Math.random() * 100 >= pct) return;
+      const n = envNum("CATALOG_MAX_CATALOG_N", envNum("MAX_CATALOG_N", 1000));
+      catalogOnceN(n, "catalog_noise");
+    }
+
+    export function pullScenario(data) {
+      v2Ping();
+      maybeCatalogNoise();
+
+      const repoIt = weightedPick(data.pullPool);
+      const repo = repoIt.repo;
+
+      let tags = data.tagByRepo[repo] || [];
+
+      if (tags.length === 0 && envBool("PULL_REFRESH_TAGS", true)) {
+        const n = envNum("PULL_TAGS_LIST_N", envNum("TAGS_LIST_N", 200));
+        const fresh = tagsListOnceN(repo, n, "tags_list_pull");
+        if (fresh && fresh.length > 0) {
+          data.tagByRepo[repo] = fresh;
+          tags = fresh;
+        }
+      }
+
+      if (tags.length === 0) {
+        think();
+        return;
+      }
+
+      const retry = envNum("PULL_TAG_RETRY", 3);
+
+      for (let i = 0; i < retry; i++) {
+        const tag = pick(tags);
+        const resolved = doManifest(repo, tag);
+        doBlobs(repo, resolved);
+        break;
+      }
+
+      think();
+    }
+
+    export default function () {
+      v2Ping();
+      think();
+    }

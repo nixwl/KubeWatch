@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-zot-ping-job
+  namespace: traffic
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 1800
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: zot.example.com/mirror/ghcr.io/grafana/k6
+          imagePullPolicy: IfNotPresent
+          command: ["k6", "run", "/scripts/ping.js"]
+          env:
+            - name: BASE_URL
+              value: "https://zot.example.com"
+            - name: INSECURE_TLS
+              value: "true"
+            - name: ZOT_USER
+              valueFrom: { secretKeyRef: { name: k6-zot-secret, key: username } }
+            - name: ZOT_PASS
+              valueFrom: { secretKeyRef: { name: k6-zot-secret, key: password } }
+            - name: ITERATIONS
+              value: "10"
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits:   { cpu: "500m", memory: "256Mi" }
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: scripts
+          projected:
+            sources:
+              - configMap:
+                  name: k6-zot-lib
+                  items: [{ key: lib.js, path: lib.js }]
+              - configMap:
+                  name: k6-zot-ping
+                  items: [{ key: ping.js, path: ping.js }]
+

@@ -1,0 +1,155 @@
+# =========================================================
+# k6 - Gitea API Repo Browse (read mostly)
+# ConfigMap: k6-gitea-api-browse
+# Script: api_browse.js (fixed: no object spread)
+# Namespace: traffic
+# =========================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-gitea-api-browse-script
+  namespace: traffic
+data:
+  api_browse.js: |
+    import http from "k6/http";
+    import { check, sleep, fail } from "k6";
+
+    /**
+     * ===========================
+     * Gitea API - Repo Browse Read
+     *  - repo metadata
+     *  - branches/tags lists paging
+     *  - user repos lists paging
+     * ===========================
+     */
+
+    // ========= ENV Basic =========
+    const BASE_URL = (__ENV.BASE_URL || "https://gitea.example.com").replace(/\/+$/, "");
+    const INSECURE_TLS = (__ENV.INSECURE_TLS === "true");
+    const TOKEN = (__ENV.GITEA_TOKEN || "").trim();
+    const OWNER = (__ENV.OWNER || "").trim();
+    const REPO = (__ENV.REPO || "").trim();
+    const THINK = Number(__ENV.SLEEP_SECONDS || 1);
+
+    // ========= ENV Load =========
+    const VUS = Number(__ENV.VUS || 1);
+    const DURATION = __ENV.DURATION || "30s";
+
+    // ========= ENV Page / Switch =========
+    const PAGES = Number(__ENV.PAGES || 2);
+    const PER_PAGE = Number(__ENV.PER_PAGE || 20);
+    const ENABLE_DETAIL = (__ENV.ENABLE_DETAIL || "true") === "true";
+    const ENABLE_COLLABORATORS = (__ENV.ENABLE_COLLABORATORS || "false") === "true";
+
+    // ========= ENV Threshold (compatible aliases) =========
+    const THRESH_FAIL_RATE =
+      Number(__ENV.TH_FAIL_RATE_MAX || __ENV.THRESH_FAIL_RATE || 0.01);
+    const THRESH_P95_MS =
+      Number(__ENV.TH_P95_MS_MAX || __ENV.THRESH_P95_MS || 1200);
+    const THRESH_CHECK_RATE =
+      Number(__ENV.TH_CHECKS_MIN || __ENV.THRESH_CHECK_RATE || 0.99);
+
+    export const options = {
+      vus: VUS,
+      duration: DURATION,
+      insecureSkipTLSVerify: INSECURE_TLS,
+      thresholds: {
+        http_req_failed: [`rate<${THRESH_FAIL_RATE}`],
+        http_req_duration: [`p(95)<${THRESH_P95_MS}`],
+        checks: [`rate>${THRESH_CHECK_RATE}`],
+      },
+    };
+
+    function must(cond, msg) {
+      if (!cond) fail(msg);
+    }
+
+    function headers() {
+      return {
+        headers: {
+          Authorization: `token ${TOKEN}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "User-Agent": "k6-gitea-api-repo-browse",
+        },
+      };
+    }
+
+    function url(path) {
+      return `${BASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
+    }
+
+    function okStatus(res, allowed, name) {
+      return check(res, {
+        [name + ": status ok"]: (r) => allowed.indexOf(r.status) !== -1,
+      });
+    }
+
+    export function setup() {
+      must(TOKEN.length > 0, "ENV GITEA_TOKEN is required");
+      must(OWNER.length > 0, "ENV OWNER is required");
+      must(REPO.length > 0, "ENV REPO is required");
+      return {};
+    }
+
+    export default function () {
+      const owner = encodeURIComponent(OWNER);
+      const repo = encodeURIComponent(REPO);
+
+      // 1) Repo meta
+      if (ENABLE_DETAIL) {
+        const params = headers();
+        params.tags = { name: "api_repo_meta" };
+        const res = http.get(url(`/api/v1/repos/${owner}/${repo}`), params);
+        okStatus(res, [200], "GET repo meta");
+        sleep(THINK);
+      }
+
+      // 2) Branches
+      for (let p = 1; p <= PAGES; p++) {
+        const params = headers();
+        params.tags = { name: "api_repo_branches" };
+        const res = http.get(
+          url(`/api/v1/repos/${owner}/${repo}/branches?page=${p}&limit=${PER_PAGE}`),
+          params
+        );
+        okStatus(res, [200], "GET branches");
+        sleep(THINK);
+      }
+
+      // 3) Tags
+      for (let p = 1; p <= PAGES; p++) {
+        const params = headers();
+        params.tags = { name: "api_repo_tags" };
+        const res = http.get(
+          url(`/api/v1/repos/${owner}/${repo}/tags?page=${p}&limit=${PER_PAGE}`),
+          params
+        );
+        okStatus(res, [200], "GET tags");
+        sleep(THINK);
+      }
+
+      // 4) collaborators(allow 403/404)
+      if (ENABLE_COLLABORATORS) {
+        const params = headers();
+        params.tags = { name: "api_repo_collaborators" };
+        const res = http.get(
+          url(`/api/v1/repos/${owner}/${repo}/collaborators?page=1&limit=${PER_PAGE}`),
+          params
+        );
+        okStatus(res, [200, 403, 404], "GET collaborators");
+        sleep(THINK);
+      }
+
+      // 5) User repos list
+      for (let p = 1; p <= PAGES; p++) {
+        const params = headers();
+        params.tags = { name: "api_repo_user_repos" };
+        const res = http.get(
+          url(`/api/v1/user/repos?page=${p}&limit=${PER_PAGE}`),
+          params
+        );
+        okStatus(res, [200], "GET /api/v1/user/repos");
+        sleep(THINK);
+      }
+    }

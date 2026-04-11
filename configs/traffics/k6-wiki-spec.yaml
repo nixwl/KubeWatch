@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-wiki-spec
+  namespace: traffic
+data:
+  # Target wiki pool (shared; reused by all later scenarios)
+  wiki-spec.json: |
+    {
+      "wikis": [
+        { "owner": "admin", "repo": "demo", "weight": 1 }
+      ],
+      "seedPages": ["Home"]
+    }

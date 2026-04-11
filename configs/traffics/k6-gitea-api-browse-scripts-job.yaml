@@ -1,0 +1,80 @@
+# =========================================================
+# Job: k6-gitea-api-browse-job
+# ConfigMap: k6-gitea-api-browse
+# Script: /scripts/api_browse.js
+# Namespace: traffic
+# =========================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-gitea-api-browse-job
+  namespace: traffic
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: k6-gitea
+        k6-scope: api
+        k6-class: browse
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:0.49.0
+          imagePullPolicy: IfNotPresent
+          command: ["k6", "run", "/scripts/api_browse.js"]
+          env:
+            # ===== connection url =====
+            - name: BASE_URL
+              value: "https://gitea.example.com"
+            - name: INSECURE_TLS
+              value: "true"
+
+            # ===== validation =====
+            - name: GITEA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: k6-gitea-secret
+                  key: token
+
+            # ===== target repo (required) =====
+            - name: OWNER
+              value: "nixwl"
+            - name: REPO
+              value: "tquic"
+
+            # ===== load parameters =====
+            - name: VUS
+              value: "1"
+            - name: DURATION
+              value: "30s"
+            - name: SLEEP_SECONDS
+              value: "1"
+
+            # ===== pages =====
+            - name: PAGES
+              value: "2"
+            - name: PER_PAGE
+              value: "20"
+            - name: ENABLE_DETAIL
+              value: "true"
+            - name: ENABLE_COLLABORATORS
+              value: "false"
+
+            # ===== thresholds =====
+            - name: THRESH_FAIL_RATE
+              value: "0.01"
+            - name: THRESH_P95_MS
+              value: "1200"
+            - name: THRESH_CHECK_RATE
+              value: "0.99"
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: scripts
+          configMap:
+            name: k6-gitea-api-browse-script

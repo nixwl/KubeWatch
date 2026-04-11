@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-zot-blobs
+  namespace: traffic
+data:
+  blobs.js: |
+    import { v2Ping, think, envStr, envNum, randInt, batchBlobs } from "./lib.js";
+    import { doManifest } from "./manifest.js";
+
+    export const options = {
+      vus: 1,
+      iterations: envNum("ITERATIONS", 3),
+      insecureSkipTLSVerify: (__ENV.INSECURE_TLS || "true") === "true",
+      discardResponseBodies: true,
+    };
+
+    function sampleNoReplace(arr, n) {
+      const a = arr.slice();
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a.slice(0, Math.min(n, a.length));
+    }
+
+    // Exported for mixed.js to call
+    export function doBlobs(repo, resolved) {
+      if (!resolved) return;
+
+      const fullPct = envNum("PULL_FULL_PCT", 10);
+      const lmin = envNum("LAYER_SAMPLE_MIN", 1);
+      const lmax = envNum("LAYER_SAMPLE_MAX", 3);
+
+      const digests = [ resolved.configDigest ];
+
+      if (resolved.layers && resolved.layers.length > 0) {
+        const full = (Math.random() * 100 < fullPct);
+        if (full) {
+          for (const l of resolved.layers) digests.push(l.digest);
+        } else {
+          const n = randInt(lmin, lmax);
+          const sampled = sampleNoReplace(resolved.layers, n);
+          for (const l of sampled) digests.push(l.digest);
+        }
+      }
+
+      batchBlobs(repo, digests);
+    }
+
+    export default function () {
+      const repo = envStr("REPO", "mirror/docker.io/library/nginx");
+      const tag  = envStr("TAG", "latest");
+
+      v2Ping();
+      const resolved = doManifest(repo, tag);
+      doBlobs(repo, resolved);
+
+      think();
+    }

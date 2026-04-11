@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-workflow-env
+  namespace: traffic
+data:
+  BASE_URL: "https://rt.example.com" # If there is a WebPath prefix: https://rt.example.com/rt
+  INSECURE_TLS: "true"
+  RT_QUEUE: "Traffic"
+
+  # k6 runtime shape
+  VUS: "6"
+  DURATION: "5m"
+  SLEEP_MIN: "0.1"
+  SLEEP_MAX: "0.6"
+
+  # staff user-pool selection strategy
+  STAFF_PICK_MODE: "roundrobin" # roundrobin | random
+
+  # Pagination
+  PER_PAGE: "20"
+
+  # Default sorting (used when the template does not specify ORDER BY)
+  DEFAULT_ORDERBY: "LastUpdated"
+  DEFAULT_ORDER: "DESC"
+
+  # Pick tickets from the list: random | first
+  PICK_TICKET_MODE: "random"
+
+  # Read before write (closer to the UI): whether to GET the ticket before PUT
+  PRE_READ_RATIO: "0.30" # 0~1
+
+  # Verify after write
+  VERIFY_AFTER_PUT: "true"
+  HISTORY_RATIO: "0.50" # When verify is enabled, ratio of history fetches (0~1)
+
+  # =========================
+  # Update switches (safe by default)
+  # =========================
+  UPDATE_SUBJECT: "true"
+  SUBJECT_PREFIX: "k6-workflow" # Prefix for the updated subject (the original subject will be overwritten)
+
+  UPDATE_PRIORITY: "true"
+  PRIORITY_MIN: "0"
+  PRIORITY_MAX: "20"
+
+  # Owner update (disabled by default; if your RT accepts Owner=username, you can enable self)
+  UPDATE_OWNER: "false"
+  OWNER_MODE: "self" # self | nobody | fixed
+  OWNER_FIXED: "staff1" # Used when OWNER_MODE=fixed
+
+  # Status update (disabled by default; S4 handles lifecycle specifically)
+  UPDATE_STATUS: "false"
+  STATUS_VALUES: |-
+    ["open","stalled"]
+
+  # Custom Field update (disabled by default; many environments limit CF updates)
+  UPDATE_CF: "false"
+  CF_JSON: "{}" # Example: {"CF.Environment":"traffic","CF.Source":"k6"}
+
+  # TicketSQL templates (prefer the intake pool first)
+  TICKETSQL_TEMPLATES: |-
+    [
+      "Queue='Traffic' AND Subject LIKE 'k6-intake%' AND Status!='deleted' ORDER BY LastUpdated DESC",
+      "Queue='Traffic' AND Status!='deleted' ORDER BY LastUpdated DESC"
+    ]
+
+  # =========================
+  # Thresholds (tunable)
+  # =========================
+  TH_ENABLE: "true"
+  TH_FAIL_RATE_MAX: "0.01"
+  TH_P95_MS_MAX: "4500"
+
+  # Per-op thresholds (0 = disabled)
+  TH_SEARCH_P95_MS: "0" # tickets_search
+  TH_GET_P95_MS: "0" # ticket_get
+  TH_PUT_P95_MS: "0" # ticket_put
+  TH_HIST_P95_MS: "0" # ticket_history

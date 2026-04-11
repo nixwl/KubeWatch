@@ -1,0 +1,82 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-gitea-web-review-job
+  namespace: traffic
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:0.49.0
+          imagePullPolicy: IfNotPresent
+          command: ["k6", "run", "/scripts/web_review.js"]
+
+          env:
+            - name: BASE_URL
+              value: "https://gitea.example.com"
+            - name: INSECURE_TLS
+              value: "true"
+            - name: REPO
+              value: "nixwl/tquic"
+            - name: BRANCH
+              value: ""
+            - name: VUS
+              value: "1"
+            - name: DURATION
+              value: "30s"
+            - name: SLEEP_SECONDS
+              value: "1"
+
+            - name: TH_FAIL_RATE_MAX # Failure-rate threshold
+              value: "0.05"
+            - name: TH_P95_MS_MAX # P95 latency threshold
+              value: "3000"
+            - name: TH_CHECKS_MIN # Minimum checks pass rate
+              value: "0.95"
+
+            - name: REPO_FILE_PATH
+              value: ""
+            - name: ENABLE_BLAME # Enable blame
+              value: "false"
+
+            # Secret injection parameters
+            - name: GITEA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: k6-gitea-secret
+                  key: token
+            - name: GITEA_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: k6-gitea-secret
+                  key: username
+            - name: GITEA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: k6-gitea-secret
+                  key: password
+
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+
+          volumeMounts:
+            - name: k6-gitea-web-review-scripts
+              mountPath: /scripts
+              readOnly: true
+
+      volumes:
+        - name: k6-gitea-web-review-scripts
+          configMap:
+            name: k6-gitea-web-review-scripts
+            items:
+              - key: web_review.js
+                path: web_review.js

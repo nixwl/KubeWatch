@@ -1,0 +1,279 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-cleanup-script
+  namespace: traffic
+data:
+  cleanup.js: |-
+    import http from "k6/http";
+    import { check, fail, sleep } from "k6";
+    import { SharedArray } from "k6/data";
+
+    const BASE_URL = __ENV.BASE_URL;
+    const INSECURE_TLS = (__ENV.INSECURE_TLS || "true").toLowerCase() === "true";
+    const RT_QUEUE = __ENV.RT_QUEUE || "Traffic";
+
+    const VUS = parseInt(__ENV.VUS || "1", 10);
+    const DURATION = __ENV.DURATION || "5m";
+    const SLEEP_MIN = parseFloat(__ENV.SLEEP_MIN || "0.2");
+    const SLEEP_MAX = parseFloat(__ENV.SLEEP_MAX || "0.8");
+
+    const CLEANUP_USER_NAME = (__ENV.CLEANUP_USER_NAME || "root").trim();
+    const ROOT_TOKEN_ENV = (__ENV.ROOT_TOKEN || "").trim();
+
+    const PER_PAGE = parseInt(__ENV.PER_PAGE || "1", 10);
+    const DEFAULT_ORDERBY = (__ENV.DEFAULT_ORDERBY || "LastUpdated").trim();
+    const DEFAULT_ORDER = (__ENV.DEFAULT_ORDER || "DESC").trim().toUpperCase();
+    const PICK_TICKET_MODE = (__ENV.PICK_TICKET_MODE || "first").toLowerCase();
+
+    const MAX_DELETES_PER_ITER = parseInt(__ENV.MAX_DELETES_PER_ITER || "1", 10);
+    const DELETE_RATIO = parseFloat(__ENV.DELETE_RATIO || "1.0");
+    const DRY_RUN = (__ENV.DRY_RUN || "false").toLowerCase() === "true";
+
+    const VERIFY_BEFORE_ACTION = (__ENV.VERIFY_BEFORE_ACTION || "true").toLowerCase() === "true";
+    const SUBJECT_MUST_PREFIX = (__ENV.SUBJECT_MUST_PREFIX || "k6-").trim();
+    const OLDER_THAN = (__ENV.OLDER_THAN || "").trim();
+
+    const DELETE_METHOD = (__ENV.DELETE_METHOD || "put_status").toLowerCase(); // put_status | delete
+    const DELETE_STATUS = (__ENV.DELETE_STATUS || "deleted").trim();
+
+    const RESOLVE_BEFORE_DELETE = (__ENV.RESOLVE_BEFORE_DELETE || "true").toLowerCase() === "true";
+    const TARGET_RESOLVE_STATUS = (__ENV.TARGET_RESOLVE_STATUS || "resolved").trim();
+    const RESOLVE_TWO_STEP_FOR_NEW = (__ENV.RESOLVE_TWO_STEP_FOR_NEW || "true").toLowerCase() === "true";
+    const INTERMEDIATE_STATUS_FOR_NEW = (__ENV.INTERMEDIATE_STATUS_FOR_NEW || "open").trim();
+
+    const TICKETSQL_TEMPLATES = (() => {
+      try { return JSON.parse(__ENV.TICKETSQL_TEMPLATES || "[]"); }
+      catch (e) { return []; }
+    })();
+
+    // Thresholds (keeping your original style)
+    function envBool(k, defVal) {
+      const v = (__ENV[k] ?? String(defVal)).toString().toLowerCase();
+      return v === "true" || v === "1" || v === "yes" || v === "y";
+    }
+    function envFloat(k, defVal) {
+      const v = parseFloat(__ENV[k]);
+      return Number.isFinite(v) ? v : defVal;
+    }
+    function envInt(k, defVal) {
+      const v = parseInt(__ENV[k], 10);
+      return Number.isFinite(v) ? v : defVal;
+    }
+
+    const TH_ENABLE = envBool("TH_ENABLE", true);
+    const TH_FAIL_RATE_MAX = envFloat("TH_FAIL_RATE_MAX", 0.01);
+    const TH_P95_MS_MAX = envInt("TH_P95_MS_MAX", 3000);
+
+    const TH_SEARCH_P95_MS = envInt("TH_SEARCH_P95_MS", 0);
+    const TH_GET_P95_MS    = envInt("TH_GET_P95_MS", 0);
+    const TH_PUT_P95_MS    = envInt("TH_PUT_P95_MS", 0);
+    const TH_DELETE_P95_MS = envInt("TH_DELETE_P95_MS", 0);
+
+    function buildThresholds() {
+      if (!TH_ENABLE) return {};
+      const t = {
+        http_req_failed:   [`rate<${TH_FAIL_RATE_MAX}`],
+        http_req_duration: [`p(95)<${TH_P95_MS_MAX}`],
+      };
+      if (TH_SEARCH_P95_MS > 0) t[`http_req_duration{op:tickets_search}`]    = [`p(95)<${TH_SEARCH_P95_MS}`];
+      if (TH_GET_P95_MS > 0)    t[`http_req_duration{op:ticket_get}`]        = [`p(95)<${TH_GET_P95_MS}`];
+      if (TH_PUT_P95_MS > 0)    t[`http_req_duration{op:ticket_put_status}`] = [`p(95)<${TH_PUT_P95_MS}`];
+      if (TH_DELETE_P95_MS > 0) t[`http_req_duration{op:ticket_delete}`]     = [`p(95)<${TH_DELETE_P95_MS}`];
+      return t;
+    }
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      vus: VUS,
+      duration: DURATION,
+      thresholds: buildThresholds(),
+    };
+
+    // Reuse users.json: compatible with searching root across multiple pools
+    const USERS = new SharedArray("users", () => [JSON.parse(open("./data/users.json"))])[0];
+
+    function hdr(token, tags) {
+      return {
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `token ${token}`,
+        },
+        tags: tags || {},
+      };
+    }
+
+    function must2xx(res, name) {
+      const ok = check(res, { [`${name} status`]: (r) => r.status >= 200 && r.status < 400 });
+      if (!ok) fail(`${name} failed: status=${res.status} body=${(res.body || "").slice(0, 400)}`);
+    }
+
+    // Cleanup scenario: do not treat idempotent/conflict statuses such as 404/409/422 as hard failures (with root-only + a single VU, this should be rare)
+    function okSoft(status) {
+      if (status >= 200 && status < 400) return true;
+      if (status === 404 || status === 409 || status === 422) return true;
+      return false;
+    }
+    function mustSoft(res, name) {
+      const ok = check(res, { [`${name} status`]: (r) => okSoft(r.status) });
+      if (!ok) fail(`${name} failed: status=${res.status} body=${(res.body || "").slice(0, 400)}`);
+    }
+
+    function j(res) { try { return res.json(); } catch (_) { return null; } }
+
+    function randBetween(a, b) { return a + Math.random() * (b - a); }
+
+    function splitQueryAndOrder(tpl) {
+      let raw = String(tpl || "").trim().replace(/\{\{QUEUE\}\}/g, RT_QUEUE);
+      if (OLDER_THAN && !/LastUpdated\s*</i.test(raw)) {
+        raw = `${raw} AND LastUpdated < '${OLDER_THAN}'`;
+      }
+      const re = /\s+ORDER\s+BY\s+([A-Za-z_][\w.]*)\s+(ASC|DESC)\s*$/i;
+      const m = raw.match(re);
+      if (m) {
+        const idx = raw.toUpperCase().lastIndexOf("ORDER BY");
+        return { query: raw.slice(0, idx).trim(), orderby: m[1], order: m[2].toUpperCase() };
+      }
+      return { query: raw, orderby: DEFAULT_ORDERBY, order: DEFAULT_ORDER };
+    }
+
+    function extractTicketIds(items) {
+      const ids = [];
+      for (const it of (items || [])) {
+        if (it && typeof it.id === "number") { ids.push(it.id); continue; }
+        const u = it && it._url ? String(it._url) : "";
+        const m = u.match(/\/ticket\/(\d+)\b/);
+        if (m) ids.push(parseInt(m[1], 10));
+      }
+      return ids;
+    }
+
+    function pickIds(ids, n) {
+      if (!ids || ids.length === 0) return [];
+      const count = Math.max(0, Math.min(n, ids.length));
+      if (count === 0) return [];
+      if (PICK_TICKET_MODE === "random") return [ids[Math.floor(Math.random() * ids.length)]];
+      return ids.slice(0, count);
+    }
+
+    function findUserByName(name) {
+      const pools = []
+        .concat(USERS.staffs || [])
+        .concat(USERS.requesters || [])
+        .concat(USERS.admins || [])
+        .concat(USERS.roots || []);
+      return pools.find(u => u && u.name === name) || null;
+    }
+
+    function pickCleanupUser() {
+      if (ROOT_TOKEN_ENV) return { name: CLEANUP_USER_NAME, token: ROOT_TOKEN_ENV };
+
+      const u = findUserByName(CLEANUP_USER_NAME);
+      if (!u || !u.token) {
+        fail(`cannot find user '${CLEANUP_USER_NAME}' with token in users.json; either add it to users.json or set ROOT_TOKEN in env`);
+      }
+      return u;
+    }
+
+    function getField(obj, keys) {
+      if (!obj || typeof obj !== "object") return null;
+      for (const k of keys) if (obj[k] !== undefined && obj[k] !== null) return obj[k];
+      return null;
+    }
+    function getStatus(ticketObj) {
+      const v = getField(ticketObj, ["Status", "status"]);
+      return v ? String(v).trim() : "";
+    }
+    function getSubject(ticketObj) {
+      const v = getField(ticketObj, ["Subject", "subject"]);
+      return v ? String(v) : "";
+    }
+
+    function putStatus(user, id, status) {
+      const r = http.put(
+        `${BASE_URL}/REST/2.0/ticket/${id}`,
+        JSON.stringify({ Status: status }),
+        hdr(user.token, { scenario: "cleanup", role: "root", op: "ticket_put_status", queue: RT_QUEUE, to: status })
+      );
+      mustSoft(r, `PUT Status=${status}`);
+      return r.status >= 200 && r.status < 400;
+    }
+
+    export default function () {
+      if (!BASE_URL) fail("BASE_URL is required");
+      if (!TICKETSQL_TEMPLATES || TICKETSQL_TEMPLATES.length === 0) {
+        fail("TICKETSQL_TEMPLATES must be a non-empty JSON array string in env ConfigMap");
+      }
+
+      if (Math.random() > DELETE_RATIO) {
+        sleep(randBetween(SLEEP_MIN, SLEEP_MAX));
+        return;
+      }
+
+      const user = pickCleanupUser(); // root-only
+
+      // 1) Search candidates
+      const tpl = TICKETSQL_TEMPLATES[Math.floor(Math.random() * TICKETSQL_TEMPLATES.length)];
+      const qinfo = splitQueryAndOrder(tpl);
+
+      const r1 = http.get(
+        `${BASE_URL}/REST/2.0/tickets?query=${encodeURIComponent(qinfo.query)}&orderby=${encodeURIComponent(qinfo.orderby)}&order=${encodeURIComponent(qinfo.order)}&per_page=${PER_PAGE}`,
+        hdr(user.token, { scenario: "cleanup", role: "root", op: "tickets_search", queue: RT_QUEUE })
+      );
+      must2xx(r1, "GET /tickets?query");
+
+      const s = j(r1);
+      const ids = extractTicketIds(s && s.items);
+      const targets = pickIds(ids, MAX_DELETES_PER_ITER);
+      if (!targets || targets.length === 0) {
+        sleep(randBetween(SLEEP_MIN, SLEEP_MAX));
+        return;
+      }
+
+      for (const id of targets) {
+        // 2) Pre-check (Subject/Status)
+        let subject = "";
+        let status = "";
+
+        const rGet = http.get(
+          `${BASE_URL}/REST/2.0/ticket/${id}`,
+          hdr(user.token, { scenario: "cleanup", role: "root", op: "ticket_get", queue: RT_QUEUE })
+        );
+        must2xx(rGet, "GET /ticket/:id (precheck)");
+
+        const t = j(rGet) || {};
+        subject = getSubject(t);
+        status = getStatus(t);
+
+        if (VERIFY_BEFORE_ACTION && SUBJECT_MUST_PREFIX && !subject.startsWith(SUBJECT_MUST_PREFIX)) {
+          continue;
+        }
+
+        if (DRY_RUN) continue;
+
+        // 3) Optional: advance to resolved first
+        if (RESOLVE_BEFORE_DELETE && status && status !== TARGET_RESOLVE_STATUS) {
+          let ok = putStatus(user, id, TARGET_RESOLVE_STATUS);
+
+          if (!ok && RESOLVE_TWO_STEP_FOR_NEW && status === "new" && INTERMEDIATE_STATUS_FOR_NEW) {
+            const ok1 = putStatus(user, id, INTERMEDIATE_STATUS_FOR_NEW);
+            if (ok1) putStatus(user, id, TARGET_RESOLVE_STATUS);
+          }
+        }
+
+        // 4) Delete: prefer PUT Status=deleted to avoid REST2 DELETE 500s
+        if (DELETE_METHOD === "put_status") {
+          putStatus(user, id, DELETE_STATUS);
+        } else {
+          const rDel = http.del(
+            `${BASE_URL}/REST/2.0/ticket/${id}`,
+            null,
+            hdr(user.token, { scenario: "cleanup", role: "root", op: "ticket_delete", queue: RT_QUEUE })
+          );
+          mustSoft(rDel, "DELETE /ticket/:id");
+        }
+      }
+
+      sleep(randBetween(SLEEP_MIN, SLEEP_MAX));
+    }

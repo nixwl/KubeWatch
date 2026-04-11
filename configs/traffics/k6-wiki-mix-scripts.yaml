@@ -1,0 +1,295 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-wiki-mixed-script
+  namespace: traffic
+data:
+  wiki_mixed.js: |
+    // wiki_mixed.js - Wiki.js Mixed Workload Entry (multi-scenario)
+    //
+    // Convention:
+    // - The Job/CronJob places the following scripts under /scripts/:
+    //   page_create.js  page_update.js  page_delete.js
+    //   pages_list.js   page_read.js    page_search.js
+    // - This entry script is located at /scripts/wiki_mixed.js
+    //
+    // Important note (kept compatible with the existing sub-scripts):
+    // - page_delete.js reads __ENV.VUS during module initialization to shard work (pickVuSlice).
+    //   Therefore: make sure the Pod environment variable VUS = the actual delete-scenario VUs, otherwise shards may be missed.
+    //   (Other sub-scripts read __ENV.VUS mainly for their own options and do not affect the mix run.)
+
+    import pagesList, { setup as setupList } from "./pages_list.js";
+    import pageRead,  { setup as setupRead } from "./page_read.js";
+    import pageSearch,{ setup as setupSearch } from "./page_search.js";
+    import pageCreate,{ setup as setupCreate } from "./page_create.js";
+    import pageUpdate,{ setup as setupUpdate } from "./page_update.js";
+    import pageDelete,{ setup as setupDelete } from "./page_delete.js";
+
+    // ============================
+    // Helpers
+    // ============================
+    function toNum(v, defVal) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : defVal;
+    }
+
+    // Allocate integer VUs by weight, ensuring sum(vus) = totalVus
+    function buildWeightedVus(totalVus, weights) {
+      const keys = Object.keys(weights).filter((k) => weights[k] > 0);
+      if (totalVus <= 0 || keys.length === 0) return {};
+
+      // If totalVus is too small: sort by weight and give 1 to the top N scenarios
+      if (totalVus < keys.length) {
+        const sorted = [...keys].sort((a, b) => weights[b] - weights[a]);
+        const outSmall = {};
+        for (const k of sorted) outSmall[k] = 0;
+        for (let i = 0; i < totalVus; i++) outSmall[sorted[i]] = 1;
+        return outSmall;
+      }
+
+      const sum = keys.reduce((a, k) => a + weights[k], 0);
+      if (!sum) return {};
+
+      const out = {};
+      let used = 0;
+
+      // Initial allocation: round down
+      for (const k of keys) {
+        const vus = Math.floor((totalVus * weights[k]) / sum);
+        out[k] = vus;
+        used += vus;
+      }
+
+      // Allocate the remaining VUs to the highest-weighted scenarios
+      let left = totalVus - used;
+      const keysByWeight = [...keys].sort((a, b) => weights[b] - weights[a]);
+      let idx = 0;
+      while (left > 0) {
+        out[keysByWeight[idx % keysByWeight.length]] += 1;
+        left -= 1;
+        idx += 1;
+      }
+
+      // Ensure each enabled scenario has at least 1 VU
+      for (const k of keys) {
+        if (out[k] < 1) out[k] = 1;
+      }
+
+      // If the "at least 1" rule causes an overflow, subtract from the lowest-weighted scenarios
+      let totalNow = keys.reduce((a, k) => a + (out[k] || 0), 0);
+      if (totalNow > totalVus) {
+        const keysByLowWeight = [...keys].sort((a, b) => weights[a] - weights[b]);
+        let over = totalNow - totalVus;
+        let j = 0;
+        while (over > 0 && j < keysByLowWeight.length) {
+          const k = keysByLowWeight[j];
+          if (out[k] > 1) {
+            out[k] -= 1;
+            over -= 1;
+          } else {
+            j += 1;
+          }
+        }
+      }
+
+      return out;
+    }
+
+    // Fixed VUs (VUS_* > 0) are allocated first, and the remainder is distributed by weight
+    function buildVusPlan(totalVus, weights, fixed) {
+      const out = {};
+      let remaining = Math.max(0, totalVus);
+
+      // 1) Fixed allocation (truncate in descending fixed order)
+      const fixedKeys = Object.keys(fixed).filter((k) => toNum(fixed[k], 0) > 0);
+      fixedKeys.sort((a, b) => toNum(fixed[b], 0) - toNum(fixed[a], 0));
+      for (const k of fixedKeys) {
+        if (remaining <= 0) break;
+        const want = Math.max(1, toNum(fixed[k], 0));
+        const give = Math.min(want, remaining);
+        out[k] = give;
+        remaining -= give;
+      }
+
+      // 2) Weight allocation
+      const weightKeys = Object.keys(weights).filter((k) => (weights[k] > 0) && !out[k]);
+      const wObj = {};
+      for (const k of weightKeys) wObj[k] = weights[k];
+
+      const wMap = buildWeightedVus(remaining, wObj);
+      for (const k of Object.keys(wMap)) out[k] = (out[k] || 0) + wMap[k];
+
+      return out;
+    }
+
+    // ============================
+    // ENV (mix-level)
+    // ============================
+    const INSECURE_TLS = (__ENV.INSECURE_TLS === "true");
+    const DURATION = __ENV.DURATION || "10m";
+
+    const TOTAL_VUS = toNum(__ENV.TOTAL_VUS, toNum(__ENV.VUS, 10));
+
+    // Weights (default leans toward read traffic)
+    const W_LIST   = toNum(__ENV.W_LIST,   15);
+    const W_READ   = toNum(__ENV.W_READ,   45);
+    const W_SEARCH = toNum(__ENV.W_SEARCH, 20);
+    const W_CREATE = toNum(__ENV.W_CREATE,  5);
+    const W_UPDATE = toNum(__ENV.W_UPDATE, 10);
+    const W_DELETE = toNum(__ENV.W_DELETE,  5);
+
+    // Fixed VUs (0 means not fixed; use weights)
+    const VUS_LIST   = toNum(__ENV.VUS_LIST,   0);
+    const VUS_READ   = toNum(__ENV.VUS_READ,   0);
+    const VUS_SEARCH = toNum(__ENV.VUS_SEARCH, 0);
+    const VUS_CREATE = toNum(__ENV.VUS_CREATE, 0);
+    const VUS_UPDATE = toNum(__ENV.VUS_UPDATE, 0);
+    const VUS_DELETE = toNum(__ENV.VUS_DELETE, 0);
+
+    // Global thresholds (single guardrail at the entry point; sub-scripts can also read FAIL_RATE_MAX / P95_MS_MAX)
+    const TH_FAIL_RATE_MAX = String(__ENV.TH_FAIL_RATE_MAX || "0.01");
+    const TH_P95_MS_MAX = String(__ENV.TH_P95_MS_MAX || "3000");
+    const TH_CHECKS_MIN = String(__ENV.TH_CHECKS_MIN || "0.95");
+
+    const weights = {
+      pages_list: W_LIST,
+      page_read: W_READ,
+      page_search: W_SEARCH,
+      page_create: W_CREATE,
+      page_update: W_UPDATE,
+      page_delete: W_DELETE,
+    };
+
+    const fixed = {
+      pages_list: VUS_LIST,
+      page_read: VUS_READ,
+      page_search: VUS_SEARCH,
+      page_create: VUS_CREATE,
+      page_update: VUS_UPDATE,
+      page_delete: VUS_DELETE,
+    };
+
+    const vusMap = buildVusPlan(TOTAL_VUS, weights, fixed);
+
+    // Delete shard compatibility note: __ENV.VUS needs to equal the delete-scenario VUs
+    const globalVus = toNum(__ENV.VUS, TOTAL_VUS);
+    if (vusMap.page_delete && globalVus !== vusMap.page_delete) {
+      console.warn(
+        `[mix][warn] page_delete enabled but __ENV.VUS=${globalVus} != page_delete_vus=${vusMap.page_delete}. ` +
+        `Your page_delete.js sharding uses __ENV.VUS at init time; set env VUS to match delete VUs to avoid missing slices.`
+      );
+    }
+
+    console.log(
+      "[mix] TOTAL_VUS=" + TOTAL_VUS +
+      " weights=" + JSON.stringify(weights) +
+      " fixed=" + JSON.stringify(fixed) +
+      " vusMap=" + JSON.stringify(vusMap) +
+      " duration=" + DURATION
+    );
+
+    // ============================
+    // k6 options (multi-scenario)
+    // ============================
+    const scenarios = {};
+
+    if (vusMap.pages_list) {
+      scenarios.pages_list = {
+        executor: "constant-vus",
+        vus: vusMap.pages_list,
+        duration: DURATION,
+        exec: "pages_list",
+        gracefulStop: "10s",
+      };
+    }
+    if (vusMap.page_read) {
+      scenarios.page_read = {
+        executor: "constant-vus",
+        vus: vusMap.page_read,
+        duration: DURATION,
+        exec: "page_read",
+        gracefulStop: "10s",
+      };
+    }
+    if (vusMap.page_search) {
+      scenarios.page_search = {
+        executor: "constant-vus",
+        vus: vusMap.page_search,
+        duration: DURATION,
+        exec: "page_search",
+        gracefulStop: "10s",
+      };
+    }
+    if (vusMap.page_create) {
+      scenarios.page_create = {
+        executor: "constant-vus",
+        vus: vusMap.page_create,
+        duration: DURATION,
+        exec: "page_create",
+        gracefulStop: "10s",
+      };
+    }
+    if (vusMap.page_update) {
+      scenarios.page_update = {
+        executor: "constant-vus",
+        vus: vusMap.page_update,
+        duration: DURATION,
+        exec: "page_update",
+        gracefulStop: "10s",
+      };
+    }
+    if (vusMap.page_delete) {
+      scenarios.page_delete = {
+        executor: "constant-vus",
+        vus: vusMap.page_delete,
+        duration: DURATION,
+        exec: "page_delete",
+        gracefulStop: "10s",
+      };
+    }
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      scenarios: scenarios,
+      thresholds: {
+        http_req_failed: ["rate<" + TH_FAIL_RATE_MAX],
+        http_req_duration: ["p(95)<" + TH_P95_MS_MAX],
+        checks: ["rate>" + TH_CHECKS_MIN],
+      },
+    };
+
+    // ============================
+    // setup: reuse the setup() function from each sub-script (runs only once globally)
+    // ============================
+    export function setup() {
+      return {
+        pages_list: setupList ? setupList() : null,
+        page_read: setupRead ? setupRead() : null,
+        page_search: setupSearch ? setupSearch() : null,
+        page_create: setupCreate ? setupCreate() : null,
+        page_update: setupUpdate ? setupUpdate() : null,
+        page_delete: setupDelete ? setupDelete() : null,
+      };
+    }
+
+    // ============================
+    // scenario exec functions
+    // ============================
+    export function pages_list(data) {
+      return pagesList(data && data.pages_list);
+    }
+    export function page_read(data) {
+      return pageRead(data && data.page_read);
+    }
+    export function page_search(data) {
+      return pageSearch(data && data.page_search);
+    }
+    export function page_create(data) {
+      return pageCreate(data && data.page_create);
+    }
+    export function page_update(data) {
+      return pageUpdate(data && data.page_update);
+    }
+    export function page_delete(data) {
+      return pageDelete(data && data.page_delete);
+    }

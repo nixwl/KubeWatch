@@ -1,0 +1,97 @@
+# =========================================================
+# Job: k6-gitea-api-gitdata-job
+# ConfigMap: k6-gitea-api-gitdata
+# Script: /scripts/api_gitdata.js
+# Namespace: traffic
+#
+# Notes:
+#  - If you are unsure about branch name, set REF="" and script will auto-detect default_branch.
+#  - If your Gitea version has 404 on raw with ?ref=..., switch RAW_REF_MODE to "path".
+# =========================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-gitea-api-gitdata-job
+  namespace: traffic
+  labels:
+    app: k6-gitea
+    k6-scope: api
+    k6-class: gitdata
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:0.49.0
+          imagePullPolicy: IfNotPresent
+          command: ["k6", "run", "/scripts/api_gitdata.js"]
+          env:
+            - name: BASE_URL
+              value: "https://gitea.example.com"
+            - name: INSECURE_TLS
+              value: "true"
+
+            - name: GITEA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: k6-gitea-secret
+                  key: token
+
+            - name: OWNER
+              value: "nixwl"
+            - name: REPO
+              value: "tquic"
+
+            - name: VUS
+              value: "1"
+            - name: DURATION
+              value: "30s"
+            - name: SLEEP_SECONDS
+              value: "1"
+
+            - name: PAGES
+              value: "2"
+            - name: PER_PAGE
+              value: "20"
+            - name: ENABLE_DETAIL
+              value: "true"
+
+            # ----- contents/raw switches -----
+            - name: ENABLE_CONTENTS
+              value: "true"
+            - name: ENABLE_RAW
+              value: "true"
+
+            # repo file path to test (must exist)
+            - name: REPO_FILE_PATH
+              value: "README.md"
+
+            # leave empty => auto detect default branch from repo meta
+            - name: REF
+              value: ""
+
+            # raw ref mode:
+            #  - query: /raw/{filepath}?ref=...
+            #  - path : /raw/{ref}/{filepath} (compat fallback)
+            - name: RAW_REF_MODE
+              value: "query"
+
+            # ----- thresholds -----
+            - name: THRESH_FAIL_RATE
+              value: "0.01"
+            - name: THRESH_P95_MS
+              value: "1200"
+            - name: THRESH_CHECK_RATE
+              value: "0.99"
+
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: scripts
+          configMap:
+            name: k6-gitea-api-gitdata-script

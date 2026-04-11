@@ -1,0 +1,232 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-notes-script
+  namespace: traffic
+data:
+  notes.js: |-
+    import http from "k6/http";
+    import { check, fail, sleep } from "k6";
+    import { SharedArray } from "k6/data";
+
+    const BASE_URL = __ENV.BASE_URL;
+    const INSECURE_TLS = (__ENV.INSECURE_TLS || "true").toLowerCase() === "true";
+    const RT_QUEUE = __ENV.RT_QUEUE || "Traffic";
+
+    const VUS = parseInt(__ENV.VUS || "6", 10);
+    const DURATION = __ENV.DURATION || "5m";
+    const SLEEP_MIN = parseFloat(__ENV.SLEEP_MIN || "0.1");
+    const SLEEP_MAX = parseFloat(__ENV.SLEEP_MAX || "0.6");
+
+    const STAFF_PICK_MODE = (__ENV.STAFF_PICK_MODE || "roundrobin").toLowerCase();
+
+    const PER_PAGE = parseInt(__ENV.PER_PAGE || "20", 10);
+
+    const DEFAULT_ORDERBY = (__ENV.DEFAULT_ORDERBY || "LastUpdated").trim();
+    const DEFAULT_ORDER = (__ENV.DEFAULT_ORDER || "DESC").trim().toUpperCase();
+
+    const PICK_TICKET_MODE = (__ENV.PICK_TICKET_MODE || "random").toLowerCase();
+
+    const NOTE_PREFIX = (__ENV.NOTE_PREFIX || "k6-notes").trim();
+
+    const TIME_TAKEN_MIN = parseInt(__ENV.TIME_TAKEN_MIN || "0", 10);
+    const TIME_TAKEN_MAX = parseInt(__ENV.TIME_TAKEN_MAX || "2", 10);
+
+    const HISTORY_RATIO = parseFloat(__ENV.HISTORY_RATIO || "0.8");
+    const GET_RATIO = parseFloat(__ENV.GET_RATIO || "0.2");
+
+    const TICKETSQL_TEMPLATES = (() => {
+      try { return JSON.parse(__ENV.TICKETSQL_TEMPLATES || "[]"); }
+      catch (e) { return []; }
+    })();
+
+    // =========================
+    // Thresholds from ENV
+    // =========================
+    function envBool(k, defVal) {
+      const v = (__ENV[k] ?? String(defVal)).toString().toLowerCase();
+      return v === "true" || v === "1" || v === "yes" || v === "y";
+    }
+    function envFloat(k, defVal) {
+      const v = parseFloat(__ENV[k]);
+      return Number.isFinite(v) ? v : defVal;
+    }
+    function envInt(k, defVal) {
+      const v = parseInt(__ENV[k], 10);
+      return Number.isFinite(v) ? v : defVal;
+    }
+
+    const TH_ENABLE = envBool("TH_ENABLE", true);
+    const TH_FAIL_RATE_MAX = envFloat("TH_FAIL_RATE_MAX", 0.01);
+    const TH_P95_MS_MAX = envInt("TH_P95_MS_MAX", 3000);
+
+    const TH_SEARCH_P95_MS  = envInt("TH_SEARCH_P95_MS", 0);
+    const TH_COMMENT_P95_MS = envInt("TH_COMMENT_P95_MS", 0);
+    const TH_HIST_P95_MS    = envInt("TH_HIST_P95_MS", 0);
+    const TH_GET_P95_MS     = envInt("TH_GET_P95_MS", 0);
+
+    function buildThresholds() {
+      if (!TH_ENABLE) return {};
+      const t = {
+        http_req_failed:   [`rate<${TH_FAIL_RATE_MAX}`],
+        http_req_duration: [`p(95)<${TH_P95_MS_MAX}`],
+      };
+      if (TH_SEARCH_P95_MS > 0)  t[`http_req_duration{op:tickets_search}`] = [`p(95)<${TH_SEARCH_P95_MS}`];
+      if (TH_COMMENT_P95_MS > 0) t[`http_req_duration{op:ticket_comment}`] = [`p(95)<${TH_COMMENT_P95_MS}`];
+      if (TH_HIST_P95_MS > 0)    t[`http_req_duration{op:ticket_history}`] = [`p(95)<${TH_HIST_P95_MS}`];
+      if (TH_GET_P95_MS > 0)     t[`http_req_duration{op:ticket_get}`]     = [`p(95)<${TH_GET_P95_MS}`];
+      return t;
+    }
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      vus: VUS,
+      duration: DURATION,
+      thresholds: buildThresholds(),
+    };
+
+    // SharedArray only accepts arrays; wrap users.json (an object) in an array and take [0]
+    const USERS = new SharedArray("users", () => [JSON.parse(open("./data/users.json"))])[0];
+
+    function must(res, name) {
+      const ok = check(res, { [`${name} status`]: (r) => r.status >= 200 && r.status < 400 });
+      if (!ok) {
+        fail(`${name} failed: status=${res.status} body=${(res.body || "").slice(0, 400)}`);
+      }
+    }
+
+    function j(res) {
+      try { return res.json(); } catch (e) { return null; }
+    }
+
+    function hdr(token, tags) {
+      return {
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `token ${token}`,
+        },
+        tags: tags || {},
+      };
+    }
+
+    function pickStaff() {
+      const arr = USERS.staffs;
+      if (!arr || arr.length === 0) fail("empty staffs pool in users.json");
+
+      if (STAFF_PICK_MODE === "random") {
+        return arr[Math.floor(Math.random() * arr.length)];
+      }
+      return arr[(__VU - 1) % arr.length];
+    }
+
+    // Support both return shapes: items[*]._url or items[*].id
+    function extractTicketIds(items) {
+      const ids = [];
+      for (const it of (items || [])) {
+        if (it && typeof it.id === "number") {
+          ids.push(it.id);
+          continue;
+        }
+        const u = it && it._url ? String(it._url) : "";
+        const m = u.match(/\/ticket\/(\d+)\b/);
+        if (m) ids.push(parseInt(m[1], 10));
+      }
+      return ids;
+    }
+
+    function randBetween(a, b) {
+      return a + Math.random() * (b - a);
+    }
+
+    function randInt(min, max) {
+      if (max <= min) return min;
+      return min + Math.floor(Math.random() * (max - min + 1));
+    }
+
+    /**
+    * Extract ORDER BY from the TicketSQL template if present
+    * RT REST2: query does not accept ORDER BY; use the orderby/order parameters instead
+     */
+    function splitQueryAndOrder(tpl) {
+      const raw = String(tpl || "").trim().replace(/\{\{QUEUE\}\}/g, RT_QUEUE);
+
+      const re = /\s+ORDER\s+BY\s+([A-Za-z_][\w.]*)\s+(ASC|DESC)\s*$/i;
+      const m = raw.match(re);
+
+      if (m) {
+        const idx = raw.toUpperCase().lastIndexOf("ORDER BY");
+        return {
+          query: raw.slice(0, idx).trim(),
+          orderby: m[1],
+          order: m[2].toUpperCase(),
+        };
+      }
+      return { query: raw, orderby: DEFAULT_ORDERBY, order: DEFAULT_ORDER };
+    }
+
+    function pickTicketId(ids) {
+      if (!ids || ids.length === 0) return null;
+      if (PICK_TICKET_MODE === "first") return ids[0];
+      return ids[Math.floor(Math.random() * ids.length)];
+    }
+
+    export default function () {
+      if (!BASE_URL) fail("BASE_URL is required");
+      if (!TICKETSQL_TEMPLATES || TICKETSQL_TEMPLATES.length === 0) {
+        fail("TICKETSQL_TEMPLATES must be a non-empty JSON array string in env ConfigMap");
+      }
+
+      const staff = pickStaff();
+
+      // 1) Search for candidate tickets first
+      const tpl = TICKETSQL_TEMPLATES[Math.floor(Math.random() * TICKETSQL_TEMPLATES.length)];
+      const qinfo = splitQueryAndOrder(tpl);
+
+      const r1 = http.get(
+        `${BASE_URL}/REST/2.0/tickets?query=${encodeURIComponent(qinfo.query)}&orderby=${encodeURIComponent(qinfo.orderby)}&order=${encodeURIComponent(qinfo.order)}&per_page=${PER_PAGE}`,
+        hdr(staff.token, { scenario: "notes", role: "staff", op: "tickets_search", queue: RT_QUEUE })
+      );
+      must(r1, "GET /tickets?query");
+
+      const s = j(r1);
+      const ids = extractTicketIds(s && s.items);
+      const id = pickTicketId(ids);
+
+      // If no ticket is available in the queue, that's normal; end this round
+      if (!id) {
+        sleep(randBetween(SLEEP_MIN, SLEEP_MAX));
+        return;
+      }
+
+      // 2) Write a comment (internal note)
+      const taken = randInt(TIME_TAKEN_MIN, TIME_TAKEN_MAX);
+      const content = `${NOTE_PREFIX} | staff=${staff.name} | id=${id} | vu=${__VU} | iter=${__ITER} | ts=${Date.now()} | rnd=${Math.random().toString(16).slice(2)}`;
+
+      const r2 = http.post(
+        `${BASE_URL}/REST/2.0/ticket/${id}/comment`,
+        JSON.stringify({ Content: content, ContentType: "text/plain", TimeTaken: taken }),
+        hdr(staff.token, { scenario: "notes", role: "staff", op: "ticket_comment", queue: RT_QUEUE })
+      );
+      must(r2, "POST /ticket/:id/comment");
+
+      // 3) Read after write: history (high default ratio)
+      if (Math.random() < HISTORY_RATIO) {
+        const r3 = http.get(
+          `${BASE_URL}/REST/2.0/ticket/${id}/history`,
+          hdr(staff.token, { scenario: "notes", role: "staff", op: "ticket_history", queue: RT_QUEUE })
+        );
+        must(r3, "GET /ticket/:id/history");
+      }
+
+      // 4) Optional: lightweight ticket read
+      if (Math.random() < GET_RATIO) {
+        const r4 = http.get(
+          `${BASE_URL}/REST/2.0/ticket/${id}`,
+          hdr(staff.token, { scenario: "notes", role: "staff", op: "ticket_get", queue: RT_QUEUE })
+        );
+        must(r4, "GET /ticket/:id");
+      }
+
+      sleep(randBetween(SLEEP_MIN, SLEEP_MAX));
+    }

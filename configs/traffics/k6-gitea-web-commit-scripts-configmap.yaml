@@ -1,0 +1,469 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-gitea-web-commit-scripts
+  namespace: traffic
+data:
+  web_commit.js: |
+    import http from "k6/http";
+    import { check, sleep, group } from "k6";
+    import { parseHTML } from "k6/html";
+
+    // ============================================================
+    // Web Commit (Read-only) - Complex Flow
+    //
+    // Optional ENV (all are optional; defaults shown):
+    //   BASE_URL=https://gitea.example.com
+    //   INSECURE_TLS=true|false
+    //   REPO=owner/repo
+    //   BRANCH=main
+    //   VUS=10
+    //   DURATION=10m
+    //   SLEEP_SECONDS=1
+    //   TIMEOUT_SECONDS=10
+    //   REDIRECTS=5
+    //   TH_FAIL_RATE_MAX=0.01
+    //   TH_P95_MS_MAX=1200
+    //   TH_CHECKS_MIN=0.99
+    //   GITEA_TOKEN=...
+    //   GITEA_USERNAME=...
+    //   GITEA_PASSWORD=...
+    //
+    // Flow toggles:
+    //   ENABLE_HOME=true
+    //   ENABLE_REPO_HOME=true
+    //   ENABLE_COMMITS_LIST=true
+    //   COMMITS_PAGES=2
+    //
+    //   ENABLE_COMMIT_DETAIL=true
+    //   COMMIT_DETAIL_PROB=1.0        # probability per iteration
+    //   COMMIT_DIFF_MODE=random       # random|split|unified
+    //
+    //   ENABLE_COMMIT_DIFF=true
+    //   COMMIT_DIFF_PROB=1.0
+    //
+    //   ENABLE_COMMIT_PATCH=false
+    //   COMMIT_PATCH_PROB=0.2         # patch is heavy; default low
+    //
+    //   ENABLE_PATH_COMMITS=true
+    //   PATH_COMMITS_PROB=0.5
+    //
+    //   ENABLE_FILE_AT_COMMIT=true
+    //   FILE_AT_COMMIT_PROB=0.5
+    //
+    // Robustness / pool settings:
+    //   API_COMMITS_LIMIT=30
+    //   API_FILES_LIMIT=50
+    //   ENABLE_HTML_SHA_FALLBACK=true # if no token/pool, parse commits list html for sha
+    //   HTML_SHA_FALLBACK_LIMIT=10
+    //   ALLOW_404_FOR_OPTIONAL=true   # treat 404 as acceptable for optional endpoints
+    //
+    //   HEAVY_EXTRA_SLEEP_SECONDS=0   # add extra sleep after heavy requests (diff/patch)
+    //
+    // NEW (commit detail resilience):
+    //   COMMIT_DETAIL_TIMEOUT_SECONDS=10    # override timeout for commit detail page
+    //   COMMIT_DETAIL_RETRIES=0             # retry count when timeout/5xx happens
+    //   COMMIT_DETAIL_RETRY_SLEEP_SECONDS=0.2
+    //   ALLOW_TIMEOUT_FOR_OPTIONAL=false   # if true, treat timeout(status=0) as acceptable in "optional" checks
+    // ============================================================
+
+    // ----------------------------
+    // global env
+    // ----------------------------
+    const TH_FAIL_RATE_MAX = String(__ENV.TH_FAIL_RATE_MAX || "0.01");
+    const TH_P95_MS_MAX    = String(__ENV.TH_P95_MS_MAX || "1200");
+    const TH_CHECKS_MIN    = String(__ENV.TH_CHECKS_MIN || "0.99");
+    const INSECURE_TLS = (__ENV.INSECURE_TLS === "true");
+    const BASE_URL = String(__ENV.BASE_URL || "https://gitea.example.com").replace(/\/+$/, "");
+    const THINK = Number(__ENV.SLEEP_SECONDS || 1);
+    const TIMEOUT_SECONDS = Number(__ENV.TIMEOUT_SECONDS || 10);
+    const REDIRECTS = Number(__ENV.REDIRECTS || 5);
+    const USERNAME = __ENV.GITEA_USERNAME || "";
+    const PASSWORD = __ENV.GITEA_PASSWORD || "";
+    const REPO = __ENV.REPO || "";
+    const TOKEN = __ENV.GITEA_TOKEN || "";
+
+    // flow toggles
+    const ENABLE_HOME         = (__ENV.ENABLE_HOME || "true") === "true";
+    const ENABLE_REPO_HOME    = (__ENV.ENABLE_REPO_HOME || "true") === "true";
+    const ENABLE_COMMITS_LIST = (__ENV.ENABLE_COMMITS_LIST || "true") === "true";
+    const COMMITS_PAGES       = Number(__ENV.COMMITS_PAGES || 2);
+
+    const ENABLE_COMMIT_DETAIL = (__ENV.ENABLE_COMMIT_DETAIL || "true") === "true";
+    const COMMIT_DETAIL_PROB   = Number(__ENV.COMMIT_DETAIL_PROB || 1.0);
+    const COMMIT_DIFF_MODE     = String(__ENV.COMMIT_DIFF_MODE || "random"); // random|split|unified
+
+    const ENABLE_COMMIT_DIFF = (__ENV.ENABLE_COMMIT_DIFF || "true") === "true";
+    const COMMIT_DIFF_PROB   = Number(__ENV.COMMIT_DIFF_PROB || 1.0);
+
+    const ENABLE_COMMIT_PATCH = (__ENV.ENABLE_COMMIT_PATCH || "false") === "true";
+    const COMMIT_PATCH_PROB   = Number(__ENV.COMMIT_PATCH_PROB || 0.2);
+
+    const ENABLE_PATH_COMMITS = (__ENV.ENABLE_PATH_COMMITS || "true") === "true";
+    const PATH_COMMITS_PROB   = Number(__ENV.PATH_COMMITS_PROB || 0.5);
+
+    const ENABLE_FILE_AT_COMMIT = (__ENV.ENABLE_FILE_AT_COMMIT || "true") === "true";
+    const FILE_AT_COMMIT_PROB   = Number(__ENV.FILE_AT_COMMIT_PROB || 0.5);
+
+    // pool / robustness
+    const API_COMMITS_LIMIT = Number(__ENV.API_COMMITS_LIMIT || 30);
+    const API_FILES_LIMIT   = Number(__ENV.API_FILES_LIMIT || 50);
+    const ENABLE_HTML_SHA_FALLBACK = (__ENV.ENABLE_HTML_SHA_FALLBACK || "true") === "true";
+    const HTML_SHA_FALLBACK_LIMIT  = Number(__ENV.HTML_SHA_FALLBACK_LIMIT || 10);
+    const ALLOW_404_FOR_OPTIONAL = (__ENV.ALLOW_404_FOR_OPTIONAL || "true") === "true";
+    const HEAVY_EXTRA_SLEEP_SECONDS = Number(__ENV.HEAVY_EXTRA_SLEEP_SECONDS || 0);
+
+    // ===== NEW: commit detail resilience knobs =====
+    const COMMIT_DETAIL_TIMEOUT_SECONDS = Number(__ENV.COMMIT_DETAIL_TIMEOUT_SECONDS || TIMEOUT_SECONDS);
+    const COMMIT_DETAIL_RETRIES = Number(__ENV.COMMIT_DETAIL_RETRIES || 0);
+    const COMMIT_DETAIL_RETRY_SLEEP_SECONDS = Number(__ENV.COMMIT_DETAIL_RETRY_SLEEP_SECONDS || 0.2);
+    const ALLOW_TIMEOUT_FOR_OPTIONAL = (__ENV.ALLOW_TIMEOUT_FOR_OPTIONAL || "false") === "true";
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      vus: Number(__ENV.VUS || 10),
+      duration: __ENV.DURATION || "10m",
+      thresholds: {
+        http_req_failed:   ["rate<" + TH_FAIL_RATE_MAX],
+        http_req_duration: ["p(95)<" + TH_P95_MS_MAX],
+        checks:            ["rate>" + TH_CHECKS_MIN],
+      },
+    };
+
+    // ----------------------------
+    // helpers
+    // ----------------------------
+    function clamp01(x) {
+      if (x !== x) return 0; // NaN
+      if (x < 0) return 0;
+      if (x > 1) return 1;
+      return x;
+    }
+
+    function chance(p) {
+      return Math.random() < clamp01(p);
+    }
+
+    function p(name) {
+      return {
+        timeout: String(TIMEOUT_SECONDS) + "s",
+        redirects: REDIRECTS,
+        tags: { name: name, scenario: "web_commit" },
+        headers: {
+          "User-Agent": "k6-gitea-web-commit",
+          Accept: "text/html",
+        },
+      };
+    }
+
+    // NEW: per-request timeout helper
+    function pWithTimeout(name, timeoutSec) {
+      const params = p(name);
+      params.timeout = String(timeoutSec) + "s";
+      return params;
+    }
+
+    function apiParams(name) {
+      const headers = {
+        "User-Agent": "k6-gitea-web-commit-setup",
+        Accept: "application/json",
+      };
+      if (TOKEN) headers.Authorization = "token " + TOKEN;
+      return {
+        timeout: String(TIMEOUT_SECONDS) + "s",
+        tags: { name: name, scenario: "web_commit" },
+        headers: headers,
+      };
+    }
+
+    function pick(arr) {
+      return arr && arr.length ? arr[Math.floor(Math.random() * arr.length)] : null;
+    }
+
+    function escapePath(path) {
+      return String(path)
+        .split("/")
+        .map((seg) => encodeURIComponent(seg))
+        .join("/");
+    }
+
+    function formEncode(obj) {
+      const parts = [];
+      for (const k in obj) {
+        parts.push(encodeURIComponent(k) + "=" + encodeURIComponent(String(obj[k])));
+      }
+      return parts.join("&");
+    }
+
+    function escapeRegex(s) {
+      return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+
+    function extractCommitShasFromHtml(html, owner, repo, limit) {
+      const shas = [];
+      const o = escapeRegex(owner);
+      const r = escapeRegex(repo);
+      const re = new RegExp("\\/" + o + "\\/" + r + "\\/commit\\/([0-9a-fA-F]{7,40})", "g");
+      let m;
+      while ((m = re.exec(html)) !== null) {
+        const sha = m[1];
+        if (sha && shas.indexOf(sha) < 0) {
+          shas.push(sha);
+          if (limit && shas.length >= limit) break;
+        }
+      }
+      return shas;
+    }
+
+    // UPDATED: optional ok check (supports 404 and optionally timeout(status=0))
+    function okOrOptional(res) {
+      if (res.status >= 200 && res.status < 400) return true;
+      if (ALLOW_404_FOR_OPTIONAL && res.status === 404) return true;
+      if (ALLOW_TIMEOUT_FOR_OPTIONAL && res.status === 0) return true; // timeout/network error
+      return false;
+    }
+
+    function pickDiffMode() {
+      if (COMMIT_DIFF_MODE === "split") return "split";
+      if (COMMIT_DIFF_MODE === "unified") return "unified";
+      // random
+      return (Math.random() < 0.5) ? "split" : "unified";
+    }
+
+    // NEW: GET with retry (timeout/status=0 or 5xx will retry)
+    function getWithRetry(url, params, retries, retrySleepSeconds) {
+      let r = http.get(url, params);
+      for (let i = 0; i < retries; i++) {
+        // status==0 => timeout/network error; >=500 => server error
+        if (r && r.status !== 0 && r.status < 500) break;
+        sleep(retrySleepSeconds);
+        r = http.get(url, params);
+      }
+      return r;
+    }
+
+    export function setup() {
+      if (!REPO || REPO.indexOf("/") < 0) {
+        return { ok: false, reason: "REPO not set (expected owner/repo)" };
+      }
+
+      const parts = REPO.split("/", 2);
+      const owner = parts[0];
+      const repo = parts[1];
+
+      let branch = __ENV.BRANCH || "main";
+      const commitShas = [];
+      const filePaths = [];
+
+      if (TOKEN) {
+        // default_branch
+        const repoInfo = http.get(
+          BASE_URL + "/api/v1/repos/" + owner + "/" + repo,
+          apiParams("setup_repo_info")
+        );
+        if (repoInfo.status === 200) {
+          const b = repoInfo.json("default_branch");
+          if (b) branch = b;
+        }
+
+        // commits sha pool
+        const commitsLimit = API_COMMITS_LIMIT > 0 ? API_COMMITS_LIMIT : 30;
+        const commitsApi = http.get(
+          BASE_URL + "/api/v1/repos/" + owner + "/" + repo + "/commits?sha=" + encodeURIComponent(branch) + "&limit=" + commitsLimit,
+          apiParams("setup_commits")
+        );
+        if (commitsApi.status === 200) {
+          const list = commitsApi.json() || [];
+          for (let i = 0; i < list.length; i++) {
+            const c = list[i];
+            if (c && c.sha) commitShas.push(c.sha);
+          }
+        }
+
+        // root files pool
+        const filesLimit = API_FILES_LIMIT > 0 ? API_FILES_LIMIT : 50;
+        const contents = http.get(
+          BASE_URL + "/api/v1/repos/" + owner + "/" + repo + "/contents?ref=" + encodeURIComponent(branch),
+          apiParams("setup_contents_root")
+        );
+        if (contents.status === 200) {
+          const list2 = contents.json() || [];
+          for (let j = 0; j < list2.length && filePaths.length < filesLimit; j++) {
+            const x = list2[j];
+            if (x && x.type === "file" && x.path) filePaths.push(x.path);
+          }
+        }
+      }
+
+      return {
+        ok: true,
+        owner: owner,
+        repo: repo,
+        branch: branch,
+        commitShas: commitShas,
+        filePaths: filePaths,
+      };
+    }
+
+    // ----------------------------
+    // web login: each VU once
+    // ----------------------------
+    let loggedIn = false;
+    let loginAttempted = false;
+
+    function ensureWebLogin() {
+      if (loggedIn || loginAttempted) return;
+      loginAttempted = true;
+
+      if (!USERNAME || !PASSWORD) return;
+
+      const loginPage = http.get(BASE_URL + "/user/login", p("web_login_page"));
+      check(loginPage, { "login page <400": (r) => r.status >= 200 && r.status < 400 });
+
+      const doc = parseHTML(loginPage.body);
+      const csrf =
+        doc.find('input[name="_csrf"]').first().attr("value") ||
+        doc.find('meta[name="_csrf"]').first().attr("content") ||
+        "";
+
+      const form = formEncode({ user_name: USERNAME, password: PASSWORD, _csrf: csrf });
+
+      const submitParams = p("web_login_submit");
+      submitParams.headers["Content-Type"] = "application/x-www-form-urlencoded";
+
+      const resp = http.post(BASE_URL + "/user/login", form, submitParams);
+      check(resp, { "login resp <400": (r) => r.status >= 200 && r.status < 400 });
+
+      const home = http.get(BASE_URL + "/", p("web_home_after_login"));
+      loggedIn = check(home, { "not redirect to login": (r) => !(r.url && r.url.indexOf("/user/login") >= 0) });
+    }
+
+    // ----------------------------
+    // default(): complex read-only commit flow
+    // ----------------------------
+    export default function (data) {
+      ensureWebLogin();
+
+      if (!data || !data.ok) {
+        group("home_only", () => {
+          const r = http.get(BASE_URL + "/", p("web_home"));
+          check(r, { "home <400": (res) => res.status >= 200 && res.status < 400 });
+        });
+        sleep(THINK);
+        return;
+      }
+
+      const owner = data.owner;
+      const repo = data.repo;
+      const branch = data.branch || "main";
+      const branchEsc = escapePath(branch);
+
+      if (ENABLE_HOME) {
+        group("home", () => {
+          const r = http.get(BASE_URL + "/", p("web_home"));
+          check(r, { "home <400": (res) => res.status >= 200 && res.status < 400 });
+        });
+      }
+
+      if (ENABLE_REPO_HOME) {
+        group("repo_home", () => {
+          const r = http.get(BASE_URL + "/" + owner + "/" + repo, p("web_repo_home"));
+          check(r, { "repo home <400": (res) => res.status >= 200 && res.status < 400 });
+        });
+      }
+
+      // 1) commits list pages (also keep html for sha fallback)
+      let firstCommitsHtml = "";
+      if (ENABLE_COMMITS_LIST) {
+        group("commits_list", () => {
+          const pages = COMMITS_PAGES > 0 ? COMMITS_PAGES : 1;
+          for (let i = 1; i <= pages; i++) {
+            const url = BASE_URL + "/" + owner + "/" + repo + "/commits/branch/" + branchEsc + "?page=" + i;
+            const r = http.get(url, p("web_commits_list_p" + i));
+            check(r, { "commits list <400": (res) => res.status >= 200 && res.status < 400 });
+            if (i === 1) firstCommitsHtml = r.body;
+          }
+        });
+      }
+
+      // 2) choose sha:
+      //    prefer setup pool; fallback parse commits list html (if enabled)
+      let sha = pick(data.commitShas);
+      if (!sha && ENABLE_HTML_SHA_FALLBACK && firstCommitsHtml) {
+        const shas = extractCommitShasFromHtml(
+          firstCommitsHtml,
+          owner,
+          repo,
+          HTML_SHA_FALLBACK_LIMIT > 0 ? HTML_SHA_FALLBACK_LIMIT : 10
+        );
+        sha = pick(shas);
+      }
+
+      // 3) commit detail (this is the one that can timeout on heavy diffs)
+      if (ENABLE_COMMIT_DETAIL && sha && chance(COMMIT_DETAIL_PROB)) {
+        group("commit_detail", () => {
+          const mode = pickDiffMode();
+          const url = BASE_URL + "/" + owner + "/" + repo + "/commit/" + sha + "?diff=" + mode;
+
+          // NEW: per-endpoint timeout + retry
+          const params = pWithTimeout("web_commit_detail", COMMIT_DETAIL_TIMEOUT_SECONDS);
+          const r = getWithRetry(url, params, COMMIT_DETAIL_RETRIES, COMMIT_DETAIL_RETRY_SLEEP_SECONDS);
+
+          check(r, { "commit detail ok": (res) => okOrOptional(res) });
+        });
+      }
+
+      // 4) commit diff / patch (heavy)
+      let didHeavy = false;
+
+      if (ENABLE_COMMIT_DIFF && sha && chance(COMMIT_DIFF_PROB)) {
+        group("commit_diff", () => {
+          const r = http.get(BASE_URL + "/" + owner + "/" + repo + "/commit/" + sha + ".diff", p("web_commit_diff"));
+          check(r, { "commit diff ok": (res) => okOrOptional(res) });
+        });
+        didHeavy = true;
+      }
+
+      if (ENABLE_COMMIT_PATCH && sha && chance(COMMIT_PATCH_PROB)) {
+        group("commit_patch", () => {
+          const r = http.get(BASE_URL + "/" + owner + "/" + repo + "/commit/" + sha + ".patch", p("web_commit_patch"));
+          check(r, { "commit patch ok": (res) => okOrOptional(res) });
+        });
+        didHeavy = true;
+      }
+
+      // 5) path commits + file at commit (optional)
+      const filePath = pick(data.filePaths);
+
+      if (ENABLE_PATH_COMMITS && filePath && chance(PATH_COMMITS_PROB)) {
+        const fileEsc = escapePath(filePath);
+        group("path_commits", () => {
+          const url = BASE_URL + "/" + owner + "/" + repo + "/commits/branch/" + branchEsc + "/" + fileEsc;
+          const r = http.get(url, p("web_path_commits"));
+          check(r, { "path commits ok": (res) => okOrOptional(res) });
+        });
+      }
+
+      if (ENABLE_FILE_AT_COMMIT && sha && filePath && chance(FILE_AT_COMMIT_PROB)) {
+        const fileEsc2 = escapePath(filePath);
+
+        group("file_at_commit_view", () => {
+          const url = BASE_URL + "/" + owner + "/" + repo + "/src/commit/" + sha + "/" + fileEsc2;
+          const r = http.get(url, p("web_file_at_commit_view"));
+          check(r, { "file@commit view ok": (res) => okOrOptional(res) });
+        });
+
+        group("file_at_commit_raw", () => {
+          const url = BASE_URL + "/" + owner + "/" + repo + "/raw/commit/" + sha + "/" + fileEsc2;
+          const r = http.get(url, p("web_file_at_commit_raw"));
+          check(r, { "file@commit raw ok": (res) => okOrOptional(res) });
+        });
+      }
+
+      // extra sleep after heavy operations (diff/patch)
+      if (didHeavy && HEAVY_EXTRA_SLEEP_SECONDS > 0) {
+        sleep(HEAVY_EXTRA_SLEEP_SECONDS);
+      }
+
+      sleep(THINK);
+    }

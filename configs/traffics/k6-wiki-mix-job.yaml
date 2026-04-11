@@ -1,0 +1,103 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-wiki-mixed-job
+  namespace: traffic
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  activeDeadlineSeconds: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        node-role: worker
+
+      volumes:
+        - name: scripts
+          emptyDir: {}
+
+        # Project the "entry script + your existing 6 sub-scripts" into the same volume, then copy them to /scripts
+        - name: cm-all
+          projected:
+            sources:
+              - configMap:
+                  name: k6-wiki-mixed-script
+                  items:
+                    - key: wiki_mixed.js
+                      path: wiki_mixed.js
+              - configMap:
+                  name: k6-wiki-pagecreate-script
+                  items:
+                    - key: page_create.js
+                      path: page_create.js
+              - configMap:
+                  name: k6-wiki-pageupdate-script
+                  items:
+                    - key: page_update.js
+                      path: page_update.js
+              - configMap:
+                  name: k6-wiki-pagedelete-script
+                  items:
+                    - key: page_delete.js
+                      path: page_delete.js
+              - configMap:
+                  name: k6-wiki-pageslist-script
+                  items:
+                    - key: pages_list.js
+                      path: pages_list.js
+              - configMap:
+                  name: k6-wiki-pageread-script
+                  items:
+                    - key: page_read.js
+                      path: page_read.js
+              - configMap:
+                  name: k6-wiki-pagesearch-script
+                  items:
+                    - key: page_search.js
+                      path: page_search.js
+
+      initContainers:
+        - name: init-scripts
+          image: busybox:1.36
+          command: ["/bin/sh", "-lc"]
+          args:
+            - |
+              set -e
+              mkdir -p /scripts
+              cp -rvL /cm/. /scripts/
+              ls -lah /scripts
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+            - name: cm-all
+              mountPath: /cm
+
+      containers:
+        - name: k6
+          image: zot.example.com/mirror/ghcr.io/grafana/k6
+          imagePullPolicy: IfNotPresent
+          command: ["k6", "run", "/scripts/wiki_mixed.js"]
+
+          envFrom:
+            - configMapRef:
+                name: k6-wiki-mixed-env
+
+          env:
+            - name: WIKI_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: k6-wiki-secret
+                  key: WIKI_TOKEN
+
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi

@@ -1,0 +1,165 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-gitea-web-commit-job
+  namespace: traffic
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:0.49.0
+          imagePullPolicy: IfNotPresent
+          command: ["k6"]
+          args: ["run", "/scripts/web_commit.js"]
+
+          env:
+            # ----------------------------
+            # base runtime
+            # ----------------------------
+            - name: BASE_URL
+              value: "https://gitea.example.com"
+            - name: INSECURE_TLS
+              value: "true"
+            - name: REPO
+              value: "nixwl/tquic"
+
+            # (MISSING before) branch / redirects
+            - name: BRANCH
+              value: "" # Empty means the script default, main; if the default branch is not main, set the actual value
+            - name: REDIRECTS
+              value: "5"
+
+            # executor: constant VUs for a fixed duration
+            - name: VUS
+              value: "1"
+            - name: DURATION
+              value: "30s"
+            - name: SLEEP_SECONDS
+              value: "1"
+
+            # ----------------------------
+            # robustness / timeout (NEW)
+            # ----------------------------
+            - name: TIMEOUT_SECONDS
+              value: "10"
+            - name: COMMIT_DETAIL_TIMEOUT_SECONDS
+              value: "20"
+            - name: COMMIT_DETAIL_RETRIES
+              value: "1"
+            - name: COMMIT_DETAIL_RETRY_SLEEP_SECONDS
+              value: "0.2"
+
+            # (MISSING before) optional check behavior
+            - name: ALLOW_404_FOR_OPTIONAL
+              value: "true"
+            - name: ALLOW_TIMEOUT_FOR_OPTIONAL
+              value: "false"
+
+            # ----------------------------
+            # flow toggles
+            # ----------------------------
+            - name: ENABLE_HOME
+              value: "true"
+            - name: ENABLE_REPO_HOME
+              value: "true"
+
+            - name: ENABLE_COMMITS_LIST
+              value: "true"
+            - name: COMMITS_PAGES
+              value: "2"
+
+            - name: ENABLE_COMMIT_DETAIL
+              value: "true"
+            - name: COMMIT_DETAIL_PROB
+              value: "1.0"
+            - name: COMMIT_DIFF_MODE
+              value: "split" # split|unified|random
+
+            - name: ENABLE_COMMIT_DIFF
+              value: "true"
+            - name: COMMIT_DIFF_PROB
+              value: "1.0"
+
+            - name: ENABLE_COMMIT_PATCH
+              value: "false" # patch is heavier
+            - name: COMMIT_PATCH_PROB
+              value: "0.2"
+
+            - name: ENABLE_PATH_COMMITS
+              value: "true"
+            - name: PATH_COMMITS_PROB
+              value: "0.5"
+
+            - name: ENABLE_FILE_AT_COMMIT
+              value: "true"
+            - name: FILE_AT_COMMIT_PROB
+              value: "0.5"
+
+            - name: HEAVY_EXTRA_SLEEP_SECONDS
+              value: "0"
+
+            # ----------------------------
+            # pool / fallback settings (MISSING before)
+            # ----------------------------
+            - name: API_COMMITS_LIMIT
+              value: "30"
+            - name: API_FILES_LIMIT
+              value: "50"
+            - name: ENABLE_HTML_SHA_FALLBACK
+              value: "true"
+            - name: HTML_SHA_FALLBACK_LIMIT
+              value: "10"
+
+            # ----------------------------
+            # thresholds (SLO-like)
+            # ----------------------------
+            - name: TH_FAIL_RATE_MAX
+              value: "0.05"
+            - name: TH_P95_MS_MAX
+              value: "3000"
+            - name: TH_CHECKS_MIN
+              value: "0.95"
+
+            # ----------------------------
+            # secrets
+            # ----------------------------
+            - name: GITEA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: k6-gitea-secret
+                  key: token
+            - name: GITEA_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: k6-gitea-secret
+                  key: username
+            - name: GITEA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: k6-gitea-secret
+                  key: password
+
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+
+          volumeMounts:
+            - name: k6-gitea-web-commit-scripts
+              mountPath: /scripts
+              readOnly: true
+
+      volumes:
+        - name: k6-gitea-web-commit-scripts
+          configMap:
+            name: k6-gitea-web-commit-scripts
+            items:
+              - key: web_commit.js
+                path: web_commit.js

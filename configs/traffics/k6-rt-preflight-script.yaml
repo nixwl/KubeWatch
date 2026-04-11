@@ -1,0 +1,186 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-preflight-script
+  namespace: traffic
+data:
+  preflight.js: |-
+    import http from "k6/http";
+    import { check, fail } from "k6";
+    import { SharedArray } from "k6/data";
+
+    const BASE_URL = __ENV.BASE_URL;
+    const INSECURE_TLS = (__ENV.INSECURE_TLS || "true").toLowerCase() === "true";
+    const RT_QUEUE = __ENV.RT_QUEUE || "General";
+    const REQUESTER_INDEX = parseInt(__ENV.REQUESTER_INDEX || "0", 10);
+    const STAFF_INDEX = parseInt(__ENV.STAFF_INDEX || "0", 10);
+    const ENABLE_DELETE = (__ENV.ENABLE_DELETE || "true").toLowerCase() === "true";
+    const SUBJECT_PREFIX = __ENV.SUBJECT_PREFIX || "k6-rt-preflight";
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      vus: 1,
+      iterations: 1,
+      thresholds: {
+        http_req_failed: ["rate<0.01"],
+        http_req_duration: ["p(95)<3000"],
+      },
+    };
+
+    // SharedArray only accepts arrays; wrap users.json (an object) in an array and take [0]
+    const USERS = new SharedArray("users", () => [JSON.parse(open("./data/users.json"))])[0];
+
+    function pick(arr, idx) {
+      if (!arr || arr.length === 0) fail("empty user pool");
+      return arr[Math.max(0, idx) % arr.length];
+    }
+
+    function hdr(token, tags) {
+      return {
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `token ${token}`,
+        },
+        tags: tags || {},
+      };
+    }
+
+    function must(res, name) {
+      const ok = check(res, { [`${name} status`]: (r) => r.status >= 200 && r.status < 400 });
+      if (!ok) {
+        fail(`${name} failed: status=${res.status} body=${(res.body || "").slice(0, 400)}`);
+      }
+    }
+
+    function j(res) {
+      try { return res.json(); } catch (e) { return null; }
+    }
+
+    function ticketIdFrom(obj, res) {
+      if (obj && obj.id) return parseInt(obj.id, 10);
+      const u = (obj && obj._url) ? String(obj._url) : "";
+      let m = u.match(/\/ticket\/(\d+)\b/);
+      if (m) return parseInt(m[1], 10);
+      const loc = res && res.headers && (res.headers.Location || res.headers.location);
+      if (loc) {
+        m = String(loc).match(/\/ticket\/(\d+)\b/);
+        if (m) return parseInt(m[1], 10);
+      }
+      return null;
+    }
+
+    export default function () {
+      if (!BASE_URL) fail("BASE_URL is required");
+
+      const requester = pick(USERS.requesters, REQUESTER_INDEX);
+      const staff = pick(USERS.staffs, STAFF_INDEX);
+
+      // 0) REST2 entry point (validated with staff)
+      let res = http.get(
+        `${BASE_URL}/REST/2.0/rt`,
+        hdr(staff.token, { scenario: "preflight", role: "staff", op: "rt" })
+      );
+      must(res, "GET /rt");
+
+      // 1) requester token validation (RT REST2 has no /user/me; use /user/:name)
+      res = http.get(
+        `${BASE_URL}/REST/2.0/user/${encodeURIComponent(requester.name)}`,
+        hdr(requester.token, { scenario: "preflight", role: "requester", op: "user_self" })
+      );
+      must(res, "GET /user/:name (requester)");
+
+      // 2) staff token validation
+      res = http.get(
+        `${BASE_URL}/REST/2.0/user/${encodeURIComponent(staff.name)}`,
+        hdr(staff.token, { scenario: "preflight", role: "staff", op: "user_self" })
+      );
+      must(res, "GET /user/:name (staff)");
+
+      // 3) List queues (do it once for requester and once for staff to verify ACL)
+      res = http.get(
+        `${BASE_URL}/REST/2.0/queues/all`,
+        hdr(requester.token, { scenario: "preflight", role: "requester", op: "queues" })
+      );
+      must(res, "GET /queues/all (requester)");
+
+      res = http.get(
+        `${BASE_URL}/REST/2.0/queues/all`,
+        hdr(staff.token, { scenario: "preflight", role: "staff", op: "queues" })
+      );
+      must(res, "GET /queues/all (staff)");
+
+      // 4) requester creates a ticket
+      const subject = `${SUBJECT_PREFIX} | req=${requester.name} | ts=${Date.now()} | rnd=${Math.random().toString(16).slice(2)}`;
+      const content = `preflight create by ${requester.name}`;
+
+      res = http.post(
+        `${BASE_URL}/REST/2.0/ticket`,
+        JSON.stringify({ Queue: RT_QUEUE, Subject: subject, Content: content }),
+        hdr(requester.token, { scenario: "preflight", role: "requester", op: "create" })
+      );
+      must(res, "POST /ticket (requester)");
+
+      const created = j(res);
+      const id = ticketIdFrom(created, res);
+      if (!id) fail(`cannot extract ticket id from create response: ${(res.body || "").slice(0, 300)}`);
+
+      // 5) requester reads details + history
+      res = http.get(
+        `${BASE_URL}/REST/2.0/ticket/${id}`,
+        hdr(requester.token, { scenario: "preflight", role: "requester", op: "get" })
+      );
+      must(res, "GET /ticket/:id (requester)");
+
+      res = http.get(
+        `${BASE_URL}/REST/2.0/ticket/${id}/history`,
+        hdr(requester.token, { scenario: "preflight", role: "requester", op: "history" })
+      );
+      must(res, "GET /ticket/:id/history (requester)");
+
+      // 6) staff reads details + comments + status transitions
+      res = http.get(
+        `${BASE_URL}/REST/2.0/ticket/${id}`,
+        hdr(staff.token, { scenario: "preflight", role: "staff", op: "get" })
+      );
+      must(res, "GET /ticket/:id (staff)");
+
+      res = http.post(
+        `${BASE_URL}/REST/2.0/ticket/${id}/comment`,
+        JSON.stringify({ Content: `preflight comment by ${staff.name}`, ContentType: "text/plain", TimeTaken: 1 }),
+        hdr(staff.token, { scenario: "preflight", role: "staff", op: "comment" })
+      );
+      must(res, "POST /comment (staff)");
+
+      // Single-step transition: stalled -> resolved (if your lifecycle differs, this will return 4xx)
+      res = http.put(
+        `${BASE_URL}/REST/2.0/ticket/${id}`,
+        JSON.stringify({ Status: "stalled" }),
+        hdr(staff.token, { scenario: "preflight", role: "staff", op: "status_stalled" })
+      );
+      must(res, "PUT Status=stalled (staff)");
+
+      res = http.put(
+        `${BASE_URL}/REST/2.0/ticket/${id}`,
+        JSON.stringify({ Status: "resolved" }),
+        hdr(staff.token, { scenario: "preflight", role: "staff", op: "status_resolved" })
+      );
+      must(res, "PUT Status=resolved (staff)");
+
+      // 7) staff reads history to verify the write
+      res = http.get(
+        `${BASE_URL}/REST/2.0/ticket/${id}/history`,
+        hdr(staff.token, { scenario: "preflight", role: "staff", op: "history" })
+      );
+      must(res, "GET /ticket/:id/history (staff)");
+
+      // 8) Optional: delete (set to deleted)
+      if (ENABLE_DELETE) {
+        res = http.del(
+          `${BASE_URL}/REST/2.0/ticket/${id}`,
+          null,
+          hdr(staff.token, { scenario: "preflight", role: "staff", op: "delete" })
+        );
+        must(res, "DELETE /ticket/:id (staff)");
+      }
+    }

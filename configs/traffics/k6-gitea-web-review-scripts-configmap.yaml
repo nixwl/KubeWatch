@@ -1,0 +1,258 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-gitea-web-review-scripts
+  namespace: traffic
+data:
+  web_review.js: |
+    import http from "k6/http";
+    import { check, sleep, group } from "k6";
+    import { parseHTML } from "k6/html";
+
+    // ----------------------------
+    // global config environment
+    // ----------------------------
+    const TH_FAIL_RATE_MAX = String(__ENV.TH_FAIL_RATE_MAX || "0.01");
+    const TH_P95_MS_MAX    = String(__ENV.TH_P95_MS_MAX || "1200");
+    const TH_CHECKS_MIN    = String(__ENV.TH_CHECKS_MIN || "0.99");
+
+    const INSECURE_TLS = (__ENV.INSECURE_TLS === "true");
+    const BASE_URL = (__ENV.BASE_URL || "https://gitea.example.com").replace(/\/+$/, "");
+    const THINK = Number(__ENV.SLEEP_SECONDS || 1);
+
+    const USERNAME = __ENV.GITEA_USERNAME || "";
+    const PASSWORD = __ENV.GITEA_PASSWORD || "";
+
+    const REPO = __ENV.REPO || "nixwl/tquic";
+    const REPO_FILE_PATH = __ENV.REPO_FILE_PATH || "";
+    const ENABLE_BLAME = (__ENV.ENABLE_BLAME === "true");
+
+    // NOTE: do NOT hardcode token in ConfigMap; inject via Secret/ENV
+    const TOKEN = __ENV.GITEA_TOKEN || "";
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      vus: Number(__ENV.VUS || 10),
+      duration: __ENV.DURATION || "10m",
+      thresholds: {
+        http_req_failed:   [`rate<${TH_FAIL_RATE_MAX}`],
+        http_req_duration: [`p(95)<${TH_P95_MS_MAX}`],
+        checks:            [`rate>${TH_CHECKS_MIN}`],
+      },
+    };
+
+    // ----------------------------
+    // functional tools
+    // ----------------------------
+    function p(name) {
+      return {
+        timeout: "10s",
+        redirects: 5,
+        tags: { name: name },
+        headers: {
+          "User-Agent": "k6-gitea-web-review",
+          Accept: "text/html",
+        },
+      };
+    }
+
+    // FIX: compatible headers construction (no object spread)
+    function apiParams(name) {
+      const headers = {
+        "User-Agent": "k6-gitea-web-review-setup",
+        Accept: "application/json",
+      };
+      if (TOKEN) {
+        headers.Authorization = "token " + TOKEN;
+      }
+      return {
+        timeout: "10s",
+        tags: { name: name },
+        headers: headers,
+      };
+    }
+
+    function pick(arr) {
+      return arr && arr.length ? arr[Math.floor(Math.random() * arr.length)] : null;
+    }
+
+    function escapePath(path) {
+      return String(path)
+        .split("/")
+        .map((seg) => encodeURIComponent(seg))
+        .join("/");
+    }
+
+    // FIX: replace http.urlencode (not available in your k6 runtime)
+    function formEncode(obj) {
+      const parts = [];
+      for (const k in obj) {
+        parts.push(encodeURIComponent(k) + "=" + encodeURIComponent(String(obj[k])));
+      }
+      return parts.join("&");
+    }
+
+    export function setup() {
+      if (!REPO.includes("/")) {
+        return { ok: false, reason: "REPO not set (expected owner/repo)" };
+      }
+
+      const parts = REPO.split("/", 2);
+      const owner = parts[0];
+      const repo = parts[1];
+
+      let branch = __ENV.BRANCH || "main";
+      let prNumbers = [];
+      let filePaths = [];
+
+      if (TOKEN) {
+        const repoInfo = http.get(`${BASE_URL}/api/v1/repos/${owner}/${repo}`, apiParams("setup_repo_info"));
+        if (repoInfo.status === 200) {
+          branch = repoInfo.json("default_branch") || branch;
+        }
+
+        const pulls = http.get(
+          `${BASE_URL}/api/v1/repos/${owner}/${repo}/pulls?state=open&limit=50`,
+          apiParams("setup_pulls")
+        );
+        if (pulls.status === 200) {
+          const list = pulls.json() || [];
+          prNumbers = list.map((x) => x && x.number).filter(Boolean);
+        }
+
+        const contents = http.get(
+          `${BASE_URL}/api/v1/repos/${owner}/${repo}/contents?ref=${encodeURIComponent(branch)}`,
+          apiParams("setup_contents_root")
+        );
+        if (contents.status === 200) {
+          const list = contents.json() || [];
+          filePaths = list
+            .filter((x) => x && x.type === "file" && x.path)
+            .map((x) => x.path);
+        }
+      }
+
+      return { ok: true, owner, repo, branch, prNumbers, filePaths };
+    }
+
+    // web login: each VU once
+    let loggedIn = false;
+    let loginAttempted = false;
+
+    function ensureWebLogin() {
+      if (loggedIn || loginAttempted) return;
+      loginAttempted = true;
+
+      if (!USERNAME || !PASSWORD) return;
+
+      const loginPage = http.get(`${BASE_URL}/user/login`, p("web_login_page"));
+      check(loginPage, { "login page <400": (r) => r.status >= 200 && r.status < 400 });
+
+      const doc = parseHTML(loginPage.body);
+      const csrf =
+        doc.find('input[name="_csrf"]').first().attr("value") ||
+        doc.find('meta[name="_csrf"]').first().attr("content") ||
+        "";
+
+      const form = formEncode({ user_name: USERNAME, password: PASSWORD, _csrf: csrf });
+
+      const submitParams = p("web_login_submit");
+      submitParams.headers["Content-Type"] = "application/x-www-form-urlencoded";
+
+      const resp = http.post(`${BASE_URL}/user/login`, form, submitParams);
+      check(resp, { "login resp <400": (r) => r.status >= 200 && r.status < 400 });
+
+      const home = http.get(`${BASE_URL}/`, p("web_home_after_login"));
+      loggedIn = check(home, { "not redirect to login": (r) => !(r.url && r.url.includes("/user/login")) });
+    }
+
+    export default function (data) {
+      ensureWebLogin();
+
+      if (!data || !data.ok) {
+        group("home", () => {
+          const r = http.get(`${BASE_URL}/`, p("web_home"));
+          check(r, { "home <400": (res) => res.status >= 200 && res.status < 400 });
+        });
+        group("explore", () => {
+          const r = http.get(`${BASE_URL}/explore`, p("web_explore"));
+          check(r, { "explore <400": (res) => res.status >= 200 && res.status < 400 });
+        });
+        sleep(THINK);
+        return;
+      }
+
+      const owner = data.owner;
+      const repo = data.repo;
+      const branch = data.branch;
+      const branchEsc = escapePath(branch);
+
+      group("home", () => {
+        const r = http.get(`${BASE_URL}/`, p("web_home"));
+        check(r, { "home <400": (res) => res.status >= 200 && res.status < 400 });
+      });
+
+      const repoHome = http.get(`${BASE_URL}/${owner}/${repo}`, p("web_repo_home"));
+      check(repoHome, { "repo home <400": (res) => res.status >= 200 && res.status < 400 });
+
+      group("code_tree", () => {
+        const r = http.get(`${BASE_URL}/${owner}/${repo}/src/branch/${branchEsc}`, p("web_code_tree"));
+        check(r, { "tree <400": (res) => res.status >= 200 && res.status < 400 });
+      });
+
+      // file selection: prefer fixed path, else pick from setup cache
+      let filePath = REPO_FILE_PATH || pick(data.filePaths) || "";
+      if (filePath) {
+        const fileEsc = escapePath(filePath);
+
+        group("code_view", () => {
+          const r = http.get(
+            `${BASE_URL}/${owner}/${repo}/src/branch/${branchEsc}/${fileEsc}`,
+            p("web_code_view")
+          );
+          check(r, { "view <400": (res) => res.status >= 200 && res.status < 400 });
+        });
+
+        group("code_raw", () => {
+          const r = http.get(
+            `${BASE_URL}/${owner}/${repo}/raw/branch/${branchEsc}/${fileEsc}`,
+            p("web_code_raw")
+          );
+          check(r, { "raw <400": (res) => res.status >= 200 && res.status < 400 });
+        });
+
+        if (ENABLE_BLAME) {
+          group("code_blame", () => {
+            const r = http.get(
+              `${BASE_URL}/${owner}/${repo}/blame/branch/${branchEsc}/${fileEsc}`,
+              p("web_code_blame")
+            );
+            check(r, { "blame <400": (res) => res.status >= 200 && res.status < 400 });
+          });
+        }
+      }
+
+      group("pr_list", () => {
+        const r = http.get(`${BASE_URL}/${owner}/${repo}/pulls`, p("web_pr_list"));
+        check(r, { "pr list <400": (res) => res.status >= 200 && res.status < 400 });
+      });
+
+      const pr = pick(data.prNumbers);
+      if (pr) {
+        group("pr_detail", () => {
+          const r = http.get(`${BASE_URL}/${owner}/${repo}/pulls/${pr}`, p("web_pr_detail"));
+          check(r, { "pr detail <400": (res) => res.status >= 200 && res.status < 400 });
+        });
+
+        group("pr_files", () => {
+          let r = http.get(`${BASE_URL}/${owner}/${repo}/pulls/${pr}/files`, p("web_pr_files"));
+          if (r.status === 404) {
+            r = http.get(`${BASE_URL}/${owner}/${repo}/pulls/${pr}?tab=files`, p("web_pr_files_tab"));
+          }
+          check(r, { "pr files <400": (res) => res.status >= 200 && res.status < 400 });
+        });
+      }
+
+      // IMPORTANT: ensure the function is properly closed (prevents "Unexpected token" at EOF)
+      sleep(THINK);
+    }

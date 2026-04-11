@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-wiki-mixed-env
+  namespace: traffic
+data:
+  # ========== Common ==========
+  BASE_URL: "https://wiki.example.com"
+  GRAPHQL_PATH: "/graphql"
+  INSECURE_TLS: "true"
+  TIMEOUT: "30s"
+
+  # ========== Mix controls ==========
+  DURATION: "10m"
+  TOTAL_VUS: "10"
+
+  # Weights (the portion of TOTAL_VUS not reserved by fixed VUS_* values is distributed by weight)
+  W_LIST: "15"
+  W_READ: "45"
+  W_SEARCH: "20"
+  W_CREATE: "5"
+  W_UPDATE: "10"
+  W_DELETE: "5"
+
+  # Fixed VUs (0 = not fixed, use weights; >0 = fixed concurrency for that sub-scenario)
+  VUS_LIST: "0"
+  VUS_READ: "0"
+  VUS_SEARCH: "0"
+  VUS_CREATE: "0"
+  VUS_UPDATE: "0"
+  VUS_DELETE: "0"
+
+  # Note: page_delete.js reads __ENV.VUS during module initialization for sharding,
+  # so it is recommended to set VUS to the final delete-scenario VUs (simplest: fix VUS_DELETE and set VUS=VUS_DELETE)
+  VUS: "1"
+
+  # ========== Thresholds ==========
+  TH_FAIL_RATE_MAX: "0.01"
+  TH_P95_MS_MAX: "3000"
+  TH_CHECKS_MIN: "0.95"
+
+  # Reused by sub-scripts (they use FAIL_RATE_MAX/P95_MS_MAX internally)
+  FAIL_RATE_MAX: "0.01"
+  P95_MS_MAX: "3000"
+
+  # ========== Think time (optional shared defaults) ==========
+  THINK_MIN_MS: "500"
+  THINK_MAX_MS: "2500"
+
+  # ========== create ==========
+  CREATE_PREFIX: "k6/create"
+  CREATE_RUN_ID: ""
+  LIMIT_PER_VU: "10"
+  LOCALE: "en"
+  EDITOR: "markdown"
+  IS_PUBLISHED: "true"
+  IS_PRIVATE: "false"
+  TITLE_PREFIX: "k6 created"
+  CONTENT_KB: "2"
+  TAGS_CSV: "k6,loadtest,create"
+
+  # ========== update ==========
+  PATH_PREFIX: "k6/create/"
+  REQUIRE_TAG: "k6"
+  # Does not fully match the current page_create.js description/content: recommended to disable strict matching (leave empty to skip validation)
+  REQUIRE_DESCRIPTION: ""
+  REQUIRE_CONTENT_SUBSTR: ""
+  PATCH_MARKER_START: "<!-- k6-patch:start -->"
+  PATCH_MARKER_END: "<!-- k6-patch:end -->"
+
+  # ========== delete ==========
+  DELETE_PATH_PREFIX: "k6/create"
+  DELETE_PREFIX: "k6/create"
+  DELETE_RUN_ID: ""
+  REQUIRE_RUN_ID: ""
+  DRY_RUN: "false"
+  MAX_DURATION: "10m"
+
+  # ========== list/read/search ==========
+  ORDER_BY: "TITLE"
+  POOL_LIMIT: "0"
+
+  READ_INCLUDE_CONTENT: "true"
+  READ_INCLUDE_DESCRIPTION: "true"
+  READ_INCLUDE_RENDER: "false"
+  READ_INCLUDE_TOC: "false"
+
+  SEARCH_PATH: ""
+  SEARCH_TERMS: "k6,loadtest,create"
+  RESULT_LIMIT: "10"

@@ -1,0 +1,192 @@
+# =========================================================
+# k6 - Gitea API Review (read only, no 404 by wrong endpoint)
+# ConfigMap: k6-gitea-api-review
+# Script: api_review.js
+# Namespace: traffic
+# =========================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-gitea-api-review-script
+  namespace: traffic
+data:
+  api_review.js: |-
+    import http from "k6/http";
+    import { check, sleep, fail } from "k6";
+
+    /**
+     * Gitea API - Pulls/Review Read
+     * - pulls list / detail
+     * - reviews list
+     * - review comments:  /pulls/{index}/reviews/{id}/comments (correct)
+     * - issue comments (optional): /issues/{index}/comments
+     */
+
+    // ========= ENV Basic =========
+    const BASE_URL = (__ENV.BASE_URL || "https://gitea.example.com").replace(/\/+$/, "");
+    const INSECURE_TLS = (__ENV.INSECURE_TLS === "true");
+    const TOKEN = (__ENV.GITEA_TOKEN || "").trim();
+    const OWNER = (__ENV.OWNER || "").trim();
+    const REPO = (__ENV.REPO || "").trim();
+    const THINK = Number(__ENV.SLEEP_SECONDS || 1);
+
+    // ========= ENV Load =========
+    const VUS = Number(__ENV.VUS || 1);
+    const DURATION = __ENV.DURATION || "30s";
+
+    // ========= ENV Page / Switch =========
+    const PAGES = Number(__ENV.PAGES || 2);
+    const PER_PAGE = Number(__ENV.PER_PAGE || 20);
+    const ENABLE_DETAIL = (__ENV.ENABLE_DETAIL || "true") === "true";
+
+    const ENABLE_REVIEWS = (__ENV.ENABLE_REVIEWS || "true") === "true";
+    const ENABLE_REVIEW_COMMENTS = (__ENV.ENABLE_REVIEW_COMMENTS || "true") === "true";
+    const ENABLE_ISSUE_COMMENTS = (__ENV.ENABLE_ISSUE_COMMENTS || "false") === "true";
+
+    // ========= Threshold =========
+    const THRESH_FAIL_RATE = Number(__ENV.TH_FAIL_RATE_MAX || __ENV.THRESH_FAIL_RATE || 0.01);
+    const THRESH_P95_MS = Number(__ENV.TH_P95_MS_MAX || __ENV.THRESH_P95_MS || 1200);
+    const THRESH_CHECK_RATE = Number(__ENV.TH_CHECKS_MIN || __ENV.THRESH_CHECK_RATE || 0.99);
+
+    export const options = {
+      vus: VUS,
+      duration: DURATION,
+      insecureSkipTLSVerify: INSECURE_TLS,
+      thresholds: {
+        http_req_failed: [`rate<${THRESH_FAIL_RATE}`],
+        http_req_duration: [`p(95)<${THRESH_P95_MS}`],
+        checks: [`rate>${THRESH_CHECK_RATE}`],
+      },
+    };
+
+    function must(cond, msg) {
+      if (!cond) fail(msg);
+    }
+
+    function headers() {
+      return {
+        headers: {
+          Authorization: `token ${TOKEN}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "User-Agent": "k6-gitea-api-review",
+        },
+      };
+    }
+
+    function url(path) {
+      return `${BASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
+    }
+
+    function okStatus(res, allowed, name) {
+      return check(res, {
+        [name + ": status ok"]: (r) => allowed.indexOf(r.status) !== -1,
+      });
+    }
+
+    export function setup() {
+      must(TOKEN.length > 0, "ENV GITEA_TOKEN is required");
+      must(OWNER.length > 0, "ENV OWNER is required");
+      must(REPO.length > 0, "ENV REPO is required");
+      return {};
+    }
+
+    function pickPullIndex(listJson) {
+      if (!listJson || !Array.isArray(listJson) || listJson.length === 0) return -1;
+      return Number(listJson[0].number || listJson[0].index || -1);
+    }
+
+    function pickFirstReviewId(reviewsJson) {
+      if (!reviewsJson || !Array.isArray(reviewsJson) || reviewsJson.length === 0) return -1;
+      return Number(reviewsJson[0].id || -1);
+    }
+
+    export default function () {
+      const owner = encodeURIComponent(OWNER);
+      const repo = encodeURIComponent(REPO);
+
+      // 1) Pulls list
+      let firstIndex = -1;
+      for (let p = 1; p <= PAGES; p++) {
+        const params = headers();
+        params.tags = { name: "api_pulls_list" };
+
+        const res = http.get(
+          url(`/api/v1/repos/${owner}/${repo}/pulls?state=open&page=${p}&limit=${PER_PAGE}`),
+          params
+        );
+        okStatus(res, [200], "GET pulls list");
+
+        if (p === 1) {
+          try {
+            firstIndex = pickPullIndex(res.json());
+          } catch (e) {
+            firstIndex = -1;
+          }
+        }
+        sleep(THINK);
+      }
+
+      if (!(ENABLE_DETAIL && firstIndex > 0)) {
+        return;
+      }
+
+      // 2) Pull detail
+      {
+        const params = headers();
+        params.tags = { name: "api_pulls_detail" };
+
+        const res = http.get(
+          url(`/api/v1/repos/${owner}/${repo}/pulls/${firstIndex}`),
+          params
+        );
+        okStatus(res, [200], "GET pull detail");
+        sleep(THINK);
+      }
+
+      // 3) Reviews list -> (optional) review comments
+      let firstReviewId = -1;
+      if (ENABLE_REVIEWS || ENABLE_REVIEW_COMMENTS) {
+        const params = headers();
+        params.tags = { name: "api_pulls_reviews" };
+
+        const res = http.get(
+          url(`/api/v1/repos/${owner}/${repo}/pulls/${firstIndex}/reviews?page=1&limit=${PER_PAGE}`),
+          params
+        );
+        okStatus(res, [200], "GET pull reviews");
+
+        try {
+          firstReviewId = pickFirstReviewId(res.json());
+        } catch (e) {
+          firstReviewId = -1;
+        }
+        sleep(THINK);
+      }
+
+      // Correct endpoint:  /pulls/{index}/reviews/{id}/comments
+      if (ENABLE_REVIEW_COMMENTS && firstReviewId > 0) {
+        const params = headers();
+        params.tags = { name: "api_pulls_review_comments" };
+
+        const res = http.get(
+          url(`/api/v1/repos/${owner}/${repo}/pulls/${firstIndex}/reviews/${firstReviewId}/comments?page=1&limit=${PER_PAGE}`),
+          params
+        );
+        okStatus(res, [200], "GET pull review comments");
+        sleep(THINK);
+      }
+
+      // 4) (Optional) Issue comments for PR
+      if (ENABLE_ISSUE_COMMENTS) {
+        const params = headers();
+        params.tags = { name: "api_issue_comments" };
+
+        const res = http.get(
+          url(`/api/v1/repos/${owner}/${repo}/issues/${firstIndex}/comments?page=1&limit=${PER_PAGE}`),
+          params
+        );
+        okStatus(res, [200], "GET issue comments");
+        sleep(THINK);
+      }
+    }

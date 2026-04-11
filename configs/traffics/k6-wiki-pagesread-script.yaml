@@ -1,0 +1,233 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-wiki-pageread-script
+  namespace: traffic
+data:
+  page_read.js: |
+    import http from "k6/http";
+    import { check, sleep, fail } from "k6";
+
+    function mustEnv(name) {
+      const v = (__ENV[name] || "").trim();
+      if (!v) fail(`missing env: ${name}`);
+      return v;
+    }
+    function normBaseUrl(u) {
+      return u.endsWith("/") ? u.slice(0, -1) : u;
+    }
+    function randInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+    function asBool(v, defVal=false) {
+      const s = String(v ?? "").trim().toLowerCase();
+      if (s === "true") return true;
+      if (s === "false") return false;
+      return defVal;
+    }
+
+    function getGqlErrors(r) {
+      try {
+        const j = r.json();
+        const e = j && j.errors;
+        if (e == null) return [];
+        if (Array.isArray(e)) return e;
+        if (typeof e === "string") return e.trim() ? [{ message: e }] : [];
+        if (typeof e === "object") return Object.keys(e).length ? [e] : [];
+        return [{ message: String(e) }];
+      } catch (err) {
+        return [{ message: `failed to parse JSON: ${String(err)}` }];
+      }
+    }
+    function noGqlErrors(r) {
+      return getGqlErrors(r).length === 0;
+    }
+    function summarizeGqlErrors(errs, limit = 3) {
+      return errs
+        .slice(0, limit)
+        .map((e) => e && (e.message || JSON.stringify(e)))
+        .join(" | ");
+    }
+    function isTocTypeBug(errs) {
+      // This is the exact class of error you hit: String cannot represent value: []
+      const s = summarizeGqlErrors(errs, 5);
+      return s.includes("String cannot represent value: []");
+    }
+
+    // ========= Required =========
+    const BASE_URL = normBaseUrl(mustEnv("BASE_URL"));
+    const WIKI_TOKEN = mustEnv("WIKI_TOKEN");
+
+    // ========= Optional =========
+    const GRAPHQL_PATH = (__ENV.GRAPHQL_PATH || "/graphql").trim();
+    const INSECURE_TLS = String(__ENV.INSECURE_TLS || "false").toLowerCase() === "true";
+
+    const VUS = Number(__ENV.VUS || 10);
+    const DURATION = String(__ENV.DURATION || "10m");
+
+    const THINK_MIN_MS = Number(__ENV.THINK_MIN_MS || 500);
+    const THINK_MAX_MS = Number(__ENV.THINK_MAX_MS || 2500);
+
+    const POOL_LIMIT = Number(__ENV.POOL_LIMIT || 0);
+
+    const LOCALE = String(__ENV.LOCALE || "").trim();
+    const ORDER_BY = String(__ENV.ORDER_BY || "TITLE").trim();
+
+    // Note: these are the "expected to be enabled" field switches; actual enablement is decided by the setup probe
+    const READ_INCLUDE_CONTENT = asBool(__ENV.READ_INCLUDE_CONTENT, true);
+    const READ_INCLUDE_RENDER = asBool(__ENV.READ_INCLUDE_RENDER, false);
+    const READ_INCLUDE_TOC = asBool(__ENV.READ_INCLUDE_TOC, false);
+    const READ_INCLUDE_DESCRIPTION = asBool(__ENV.READ_INCLUDE_DESCRIPTION, false);
+
+    const TIMEOUT = String(__ENV.TIMEOUT || "30s").trim();
+
+    const FAIL_RATE_MAX = Number(__ENV.FAIL_RATE_MAX || 0.01);
+    const P95_MS_MAX = Number(__ENV.P95_MS_MAX || 2000);
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      scenarios: {
+        s2_page_read: {
+          executor: "constant-vus",
+          vus: VUS,
+          duration: DURATION,
+          gracefulStop: "30s"
+        }
+      },
+      thresholds: {
+        http_req_failed: [`rate<${FAIL_RATE_MAX}`],
+        http_req_duration: [`p(95)<${P95_MS_MAX}`],
+        checks: ["rate>0.99"]
+      }
+    };
+
+    function postGraphQL(query, tags) {
+      const url = `${BASE_URL}${GRAPHQL_PATH}`;
+      const payload = JSON.stringify({ query });
+      return http.post(url, payload, {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${WIKI_TOKEN}`,
+          "User-Agent": "k6-wikijs-s2-page-read"
+        },
+        tags,
+        timeout: TIMEOUT
+      });
+    }
+
+    function buildPagesListQuery() {
+      const args = [];
+      if (LOCALE) args.push(`locale: "${LOCALE}"`);
+      if (ORDER_BY) args.push(`orderBy: ${ORDER_BY}`);
+      const argStr = args.length ? `(${args.join(", ")})` : "";
+      return `{ pages { list${argStr} { id path title } } }`;
+    }
+
+    function buildPageSingleQuery(id, extraFields=[]) {
+      const fields = ["id", "path", "title", "createdAt", "updatedAt", ...extraFields];
+      return `{ pages { single(id: ${id}) { ${fields.join(" ")} } } }`;
+    }
+
+    function probeFieldOrFail(probeId, fieldName, allowDisable=false) {
+      const q = buildPageSingleQuery(probeId, [fieldName]);
+      const res = postGraphQL(q, { api: "wikijs", op: "pages.single", scenario: "s2", phase: `setup-probe-${fieldName}` });
+      const errs = getGqlErrors(res);
+      if (errs.length === 0) return { ok: true, disable: false, errs: [] };
+
+      // toc special case: allow toc to be auto-disabled for backend type bugs so the load test can continue
+      if (allowDisable && fieldName === "toc" && isTocTypeBug(errs)) {
+        console.warn(`[setup] disable field "toc": ${summarizeGqlErrors(errs, 4)}`);
+        return { ok: true, disable: true, errs };
+      }
+
+      // If other fields produce errors: fail directly (avoids masking the real issue)
+      fail(`setup(probe pages.single + ${fieldName}) got GraphQL errors: ${summarizeGqlErrors(errs, 4)}`);
+      return { ok: false, disable: false, errs }; // unreachable
+    }
+
+    export function setup() {
+      // 1) List the page pool
+      const qList = buildPagesListQuery();
+      const resList = postGraphQL(qList, { api: "wikijs", op: "pages.list", scenario: "s2", phase: "setup" });
+
+      const okList = check(resList, {
+        "setup: http 200": (r) => r.status === 200,
+        "setup: no gql errors": (r) => noGqlErrors(r),
+        "setup: pages.list[]": (r) => {
+          try {
+            const j = r.json();
+            const arr = j.data && j.data.pages && j.data.pages.list;
+            return Array.isArray(arr);
+          } catch (_) { return false; }
+        }
+      });
+
+      if (!okList) {
+        const errs = summarizeGqlErrors(getGqlErrors(resList));
+        fail(`setup(list) failed: status=${resList.status}, gqlErrors=${errs}, body=${(resList.body || "").slice(0, 300)}`);
+      }
+
+      const j = resList.json();
+      let pages = (j.data.pages.list || []).filter((p) => p && typeof p.id === "number");
+      if (pages.length === 0) fail("setup(list) returned empty pages pool");
+      if (POOL_LIMIT > 0 && pages.length > POOL_LIMIT) pages = pages.slice(0, POOL_LIMIT);
+
+      const probeId = pages[0].id;
+
+      // 2) Probe the base first (ensure the single query foundation is usable)
+      {
+        const qBase = buildPageSingleQuery(probeId, []);
+        const resBase = postGraphQL(qBase, { api: "wikijs", op: "pages.single", scenario: "s2", phase: "setup-probe-base" });
+        const errs = getGqlErrors(resBase);
+        if (errs.length > 0) {
+          fail(`setup(probe pages.single base) got GraphQL errors: ${summarizeGqlErrors(errs, 4)}`);
+        }
+      }
+
+      // 3) Probe optional fields: toc may be auto-disabled; other field errors fail the setup
+      const features = {
+        description: READ_INCLUDE_DESCRIPTION,
+        content: READ_INCLUDE_CONTENT,
+        render: READ_INCLUDE_RENDER,
+        toc: READ_INCLUDE_TOC
+      };
+
+      if (features.description) probeFieldOrFail(probeId, "description", false);
+      if (features.content) probeFieldOrFail(probeId, "content", false);
+      if (features.render) probeFieldOrFail(probeId, "render", false);
+
+      if (features.toc) {
+        const r = probeFieldOrFail(probeId, "toc", true);
+        if (r.disable) features.toc = false; // Auto-disable toc
+      }
+
+      return { pages, features };
+    }
+
+    export default function (data) {
+      const pages = data.pages;
+      const features = data.features || {};
+      const p = pages[Math.floor(Math.random() * pages.length)];
+
+      const extra = [];
+      if (features.description) extra.push("description");
+      if (features.content) extra.push("content");
+      if (features.render) extra.push("render");
+      if (features.toc) extra.push("toc"); // If the backend has a toc type bug, setup will already have disabled it automatically
+
+      const q = buildPageSingleQuery(p.id, extra);
+      const res = postGraphQL(q, { api: "wikijs", op: "pages.single", scenario: "s2" });
+
+      check(res, {
+        "http 200": (r) => r.status === 200,
+        "no gql errors": (r) => noGqlErrors(r),
+        "has pages.single": (r) => {
+          try {
+            const j = r.json();
+            return j.data && j.data.pages && j.data.pages.single != null;
+          } catch (_) { return false; }
+        }
+      });
+
+      sleep(randInt(THINK_MIN_MS, THINK_MAX_MS) / 1000);
+    }

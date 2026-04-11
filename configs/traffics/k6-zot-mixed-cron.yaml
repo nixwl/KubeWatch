@@ -1,0 +1,281 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: k6-zot-mixed-cron
+  namespace: traffic
+spec:
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 3600
+      ttlSecondsAfterFinished: 3600
+
+      template:
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            node-role: worker
+          containers:
+            - name: k6
+              image: zot.example.com/mirror/ghcr.io/grafana/k6
+              imagePullPolicy: IfNotPresent
+
+              command: ["/bin/sh", "-ceu"]
+              args:
+                - |
+                  # -------- time & run_id --------
+                  hour="$(date +%H)"
+                  day="$(date +%Y%m%d)"
+                  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+
+                  in_list() { x="$1"; shift; for a in "$@"; do [ "$a" = "$x" ] && return 0; done; return 1; }
+
+                  LOW_HOURS="${LOW_HOURS:-00 01 02 03 04 05 06 07 19 20 21 22 23 24}"
+                  PEAK_HOURS="${PEAK_HOURS:-08 09}"
+
+                  if in_list "$hour" $PEAK_HOURS; then
+                    PROFILE="peak"
+                  elif in_list "$hour" $LOW_HOURS; then
+                    PROFILE="low"
+                  else
+                    PROFILE="high"
+                  fi
+                  export PROFILE
+
+                  # -------- apply params by profile (small-cluster optimized) --------
+                  apply_low() {
+                    export DURATION="55m"
+                    export PULL_VUS="1" BROWSE_VUS="0" CATALOG_VUS="0"
+                    export THINK_MIN="0.80" THINK_MAX="2.00"
+
+                    export MAX_REPOS="20"
+                    export SETUP_TAGS_LIST_N="50"
+                    export DISCOVER_TAGS="true" REQUIRE_TAGS="true" ALLOW_SEED_TAGS="true"
+
+                    export BROWSE_TAGS_LIST_PCT="0"
+                    export BROWSE_TAGS_LIST_N="50"
+                    export BROWSE_MANIFEST_GET_PCT="50"
+                    export BROWSE_TAG_RETRY="1"
+
+                    export PULL_REFRESH_TAGS="true"
+                    export PULL_TAGS_LIST_N="50"
+                    export PULL_MANIFEST_GET_PCT="75"
+                    export PULL_TAG_RETRY="2"
+
+                    export PULL_BLOB_GET_PCT="30"
+                    export PULL_BLOB_PARALLELISM="1"
+                    export PULL_FULL_PCT="0"
+                    export PULL_LAYER_SAMPLE_MIN="1"
+                    export PULL_LAYER_SAMPLE_MAX="1"
+
+                    export CATALOG_PCT="0"
+                    export CATALOG_MAX_CATALOG_N="200"
+
+                    export HTTP_REQ_FAILED="0.02"
+                    export HTTP_REQ_P95_MS="2500"
+                  }
+
+                  apply_high() {
+                    export DURATION="55m"
+                    export PULL_VUS="1" BROWSE_VUS="1" CATALOG_VUS="0"
+                    export THINK_MIN="0.25" THINK_MAX="0.90"
+
+                    export MAX_REPOS="30"
+                    export SETUP_TAGS_LIST_N="100"
+                    export DISCOVER_TAGS="true" REQUIRE_TAGS="true" ALLOW_SEED_TAGS="true"
+
+                    export BROWSE_TAGS_LIST_PCT="5"
+                    export BROWSE_TAGS_LIST_N="100"
+                    export BROWSE_MANIFEST_GET_PCT="60"
+                    export BROWSE_TAG_RETRY="2"
+
+                    export PULL_REFRESH_TAGS="true"
+                    export PULL_TAGS_LIST_N="100"
+                    export PULL_MANIFEST_GET_PCT="90"
+                    export PULL_TAG_RETRY="3"
+
+                    export PULL_BLOB_GET_PCT="50"
+                    export PULL_BLOB_PARALLELISM="1"
+                    export PULL_FULL_PCT="1"
+                    export PULL_LAYER_SAMPLE_MIN="1"
+                    export PULL_LAYER_SAMPLE_MAX="2"
+
+                    export CATALOG_PCT="0"
+                    export CATALOG_MAX_CATALOG_N="500"
+
+                    export HTTP_REQ_FAILED="0.01"
+                    export HTTP_REQ_P95_MS="1800"
+                  }
+
+                  apply_peak() {
+                    export DURATION="55m"
+                    export PULL_VUS="2" BROWSE_VUS="1" CATALOG_VUS="0"
+                    export THINK_MIN="0.10" THINK_MAX="0.40"
+
+                    export MAX_REPOS="50"
+                    export SETUP_TAGS_LIST_N="100"
+                    export DISCOVER_TAGS="true" REQUIRE_TAGS="true" ALLOW_SEED_TAGS="true"
+
+                    export BROWSE_TAGS_LIST_PCT="10"
+                    export BROWSE_TAGS_LIST_N="200"
+                    export BROWSE_MANIFEST_GET_PCT="70"
+                    export BROWSE_TAG_RETRY="2"
+
+                    export PULL_REFRESH_TAGS="true"
+                    export PULL_TAGS_LIST_N="200"
+                    export PULL_MANIFEST_GET_PCT="95"
+                    export PULL_TAG_RETRY="3"
+
+                    # Small-cluster protection: keep parallelism at 1 even at peak, using a higher GET ratio and shorter think time to increase intensity
+                    export PULL_BLOB_GET_PCT="65"
+                    export PULL_BLOB_PARALLELISM="1"
+                    export PULL_FULL_PCT="2"
+                    export PULL_LAYER_SAMPLE_MIN="1"
+                    export PULL_LAYER_SAMPLE_MAX="3"
+
+                    export CATALOG_PCT="0"
+                    export CATALOG_MAX_CATALOG_N="800"
+
+                    export HTTP_REQ_FAILED="0.02"
+                    export HTTP_REQ_P95_MS="2500"
+                  }
+
+                  case "$PROFILE" in
+                    low)  apply_low ;;
+                    peak) apply_peak ;;
+                    high) apply_high ;;
+                    *)    apply_high ;;
+                  esac
+
+                  # -------- output path (PVC) --------
+                  run_id="${PROFILE}-${JOB_NAME:-job}-${POD_NAME:-pod}-${ts}"
+                  out="/logs/zot/${PROFILE}/${day}"
+                  mkdir -p "$out"
+
+                  echo "[runner] hour=${hour} profile=${PROFILE} run_id=${run_id}"
+                  echo "[runner] output=${out}"
+
+                  env | grep -E '^(PROFILE|DURATION|PULL_VUS|BROWSE_VUS|CATALOG_VUS|THINK_MIN|THINK_MAX|MAX_REPOS|SETUP_TAGS_LIST_N|DISCOVER_TAGS|REQUIRE_TAGS|ALLOW_SEED_TAGS|BROWSE_|PULL_|CATALOG_|HTTP_REQ_)=' \
+                    > "${out}/env-${run_id}.txt"
+
+                  # -------- run k6 --------
+                  cd /scripts
+                  k6 run ./mixed.js \
+                    --tag run_id="${run_id}" \
+                    --tag profile="${PROFILE}" \
+                    --tag hour="${hour}" \
+                    --summary-export "${out}/summary-${run_id}.json" \
+                    2>&1 | tee "${out}/run-${run_id}.log"
+
+              env:
+                # Time windows for each tier (adjust as needed)
+                - name: LOW_HOURS
+                  value: "00 01 02 03 04 05 06 07 08 12 13 21 22 23"
+                - name: PEAK_HOURS
+                  value: "17 18"
+
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: JOB_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.labels['batch.kubernetes.io/job-name']
+
+                # ========= Registry / Auth (fixed) =========
+                - name: BASE_URL
+                  value: "https://zot.example.com"
+                - name: INSECURE_TLS
+                  value: "true"
+                - name: ZOT_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: k6-zot-secret
+                      key: username
+                - name: ZOT_PASS
+                  valueFrom:
+                    secretKeyRef:
+                      name: k6-zot-secret
+                      key: password
+
+                # ========= Repo spec (fixed) =========
+                # mixed.js opens "./repo-spec.json"; keep the filename as-is here. We already cd'd to /scripts above.
+                - name: REPO_SPEC_FILE
+                  value: "repo-spec.json"
+
+                # Repository discovery is disabled by default (avoid _catalog / large-scale repo expansion)
+                - name: DISCOVER_REPOS
+                  value: "false"
+                - name: DISCOVER_CATALOG_N
+                  value: "1000"
+
+                # Repo filtering and shuffling (fixed defaults; enable regex only when needed)
+                - name: SHUFFLE_REPOS
+                  value: "true"
+                # - name: REPO_ALLOW_REGEX
+                #   value: '^mirror/docker\.io/library/'
+                # - name: REPO_DENY_REGEX
+                #   value: '(^mirror/ghcr\.io/)'
+
+              resources:
+                # Be conservative for small clusters; if you need higher peaks later, raise the CPU limit first, then tune VUs
+                requests: { cpu: "200m", memory: "256Mi" }
+                limits: { cpu: "1200m", memory: "768Mi" }
+
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                  readOnly: true
+                - name: k6-logs
+                  mountPath: /logs
+
+          volumes:
+            - name: k6-logs
+              persistentVolumeClaim:
+                claimName: k6-logs-pvc
+
+            - name: scripts
+              projected:
+                sources:
+                  - configMap:
+                      {
+                        name: k6-zot-lib,
+                        items: [{ key: lib.js, path: lib.js }],
+                      }
+                  - configMap:
+                      {
+                        name: k6-zot-ping,
+                        items: [{ key: ping.js, path: ping.js }],
+                      }
+                  - configMap:
+                      {
+                        name: k6-zot-catalog,
+                        items: [{ key: catalog.js, path: catalog.js }],
+                      }
+                  - configMap:
+                      {
+                        name: k6-zot-tags,
+                        items: [{ key: tags.js, path: tags.js }],
+                      }
+                  - configMap:
+                      {
+                        name: k6-zot-manifest,
+                        items: [{ key: manifest.js, path: manifest.js }],
+                      }
+                  - configMap:
+                      {
+                        name: k6-zot-blobs,
+                        items: [{ key: blobs.js, path: blobs.js }],
+                      }
+                  - configMap:
+                      name: k6-zot-mixed
+                      items:
+                        - { key: mixed.js, path: mixed.js }
+                        - { key: repo-spec.json, path: repo-spec.json }

@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: k6-rt-users
+  namespace: traffic
+type: Opaque
+stringData:
+  users.json: |
+    {
+        "root": [
+            { "name": "root", "token": "<root-api-token>" }
+        ],
+        "requesters": [
+            { "name": "requester1", "token": "<requester1-api-token>" },
+            { "name": "requester2", "token": "<requester2-api-token>" },
+            { "name": "requester3", "token": "<requester3-api-token>" },
+            { "name": "requester4", "token": "<requester4-api-token>" },
+            { "name": "requester5", "token": "<requester5-api-token>" },
+            { "name": "requester6", "token": "<requester6-api-token>" }
+        ],
+        "staffs": [
+            { "name": "staff1", "token": "<staff1-api-token>" },
+            { "name": "staff2", "token": "<staff2-api-token>" },
+            { "name": "staff3", "token": "<staff3-api-token>" }
+        ]
+    }

@@ -1,0 +1,26 @@
+# k6-zot-tags-cm.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-zot-tags
+  namespace: traffic
+data:
+  tags.js: |
+    import { v2Ping, tagsListOnce, think, envStr, envNum } from "./lib.js";
+
+    export const options = {
+      vus: 1,
+      iterations: envNum("ITERATIONS", 5),
+      insecureSkipTLSVerify: (__ENV.INSECURE_TLS || "true") === "true",
+      discardResponseBodies: true,
+    };
+
+    export function doTags(repo) { return tagsListOnce(repo); }
+
+    export default function () {
+      const repo = envStr("REPO", "mirror/docker.io/library/nginx");
+      v2Ping();
+      const tags = doTags(repo);
+      // If tags is null, tags/list is unavailable or there are no tags (this will show up in the Job logs)
+      think();
+    }

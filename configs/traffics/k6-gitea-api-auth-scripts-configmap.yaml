@@ -1,0 +1,127 @@
+# =========================================================
+# k6 - Gitea API Auth / Version / Token validation
+# Includes:
+#  1) PVC (optional) for logs
+#  2) ConfigMap (api_auth.js fixed)
+#  3) Job
+# Namespace: traffic
+# =========================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-gitea-api-auth-script
+  namespace: traffic
+data:
+  api_auth.js: |
+    import http from "k6/http";
+    import { check, sleep, fail } from "k6";
+
+    /**
+     * ===========================
+     * Gitea API - Auth / Version Validation
+     *  1) /api/v1/version => verify api reachability
+     *  2) /api/v1/user => verify Token authentication
+     *  3) /api/v1/user/repos => verify pagination read path
+     * ===========================
+     */
+
+    // ========= ENV Basic =========
+    const BASE_URL = (__ENV.BASE_URL || "https://gitea.example.com").replace(/\/+$/, "");
+    const INSECURE_TLS = (__ENV.INSECURE_TLS === "true");
+    const TOKEN = (__ENV.GITEA_TOKEN || "").trim();
+    const THINK = Number(__ENV.SLEEP_SECONDS || 1);
+
+    // ========= ENV Load =========
+    const VUS = Number(__ENV.VUS || 1);
+    const DURATION = __ENV.DURATION || "30s";
+
+    // ========= ENV Page =========
+    const PAGES = Number(__ENV.PAGES || 1);
+    const PER_PAGE = Number(__ENV.PER_PAGE || 20);
+    const ENABLE_USER_REPOS = (__ENV.ENABLE_USER_REPOS || "true") === "true";
+
+    // ========= ENV Threshold =========
+    const THRESH_FAIL_RATE =
+      Number(__ENV.TH_FAIL_RATE_MAX || __ENV.THRESH_FAIL_RATE || 0.01);
+    const THRESH_P95_MS =
+      Number(__ENV.TH_P95_MS_MAX || __ENV.THRESH_P95_MS || 1200);
+    const THRESH_CHECK_RATE =
+      Number(__ENV.TH_CHECKS_MIN || __ENV.THRESH_CHECK_RATE || 0.99);
+
+    export const options = {
+      vus: VUS,
+      duration: DURATION,
+      insecureSkipTLSVerify: INSECURE_TLS,
+      thresholds: {
+        http_req_failed: [`rate<${THRESH_FAIL_RATE}`],
+        http_req_duration: [`p(95)<${THRESH_P95_MS}`],
+        checks: [`rate>${THRESH_CHECK_RATE}`],
+      },
+    };
+
+    function must(cond, msg) {
+      if (!cond) fail(msg);
+    }
+
+    function headers() {
+      return {
+        headers: {
+          Authorization: `token ${TOKEN}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "User-Agent": "k6-gitea-api-auth",
+        },
+      };
+    }
+
+    function url(path) {
+      return `${BASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
+    }
+
+    function okStatus(res, allowed, name) {
+      return check(res, {
+        [name + ": status ok"]: (r) => allowed.indexOf(r.status) !== -1,
+      });
+    }
+
+    export function setup() {
+      must(TOKEN.length > 0, "ENV GITEA_TOKEN is required for api-auth");
+      return {};
+    }
+
+    export default function () {
+      // 1) Version
+      {
+        const params = headers();
+        params.tags = { name: "api_auth_version" };
+
+        const res = http.get(url("/api/v1/version"), params);
+        okStatus(res, [200], "GET /api/v1/version");
+      }
+      sleep(THINK);
+
+      // 2) Current user (token validation)
+      {
+        const params = headers();
+        params.tags = { name: "api_auth_user" };
+
+        const res = http.get(url("/api/v1/user"), params);
+        okStatus(res, [200], "GET /api/v1/user");
+      }
+      sleep(THINK);
+
+      // 3) user repos list (pagination)
+      if (ENABLE_USER_REPOS) {
+        for (let p = 1; p <= PAGES; p++) {
+          const params = headers();
+          params.tags = { name: "api_auth_user_repos" };
+
+          const res = http.get(
+            url(`/api/v1/user/repos?page=${p}&limit=${PER_PAGE}`),
+            params
+          );
+          okStatus(res, [200], "GET /api/v1/user/repos");
+          sleep(THINK);
+        }
+      }
+    }

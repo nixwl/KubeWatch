@@ -1,0 +1,230 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-gitea-web-issues-scripts
+  namespace: traffic
+data:
+  web_issues.js: |
+    import http from "k6/http";
+    import { check, sleep, group } from "k6";
+    import { parseHTML } from "k6/html";
+
+    // ----------------------------
+    // global config environment
+    // ----------------------------
+    const TH_FAIL_RATE_MAX = String(__ENV.TH_FAIL_RATE_MAX || "0.01");
+    const TH_P95_MS_MAX    = String(__ENV.TH_P95_MS_MAX || "1200");
+    const TH_CHECKS_MIN    = String(__ENV.TH_CHECKS_MIN || "0.99");
+
+    const INSECURE_TLS = (__ENV.INSECURE_TLS === "true");
+    const BASE_URL = String(__ENV.BASE_URL || "https://gitea.example.com").replace(/\/+$/, "");
+    const THINK = Number(__ENV.SLEEP_SECONDS || 1);
+
+    // Optional login: use this if the site is configured to require authentication for viewing
+    const USERNAME = __ENV.GITEA_USERNAME || "";
+    const PASSWORD = __ENV.GITEA_PASSWORD || "";
+
+    // Target repository (recommended to keep fixed): owner/repo
+    const REPO = __ENV.REPO || "";
+
+    // List pagination and optional pages
+    const ISSUES_PAGES = Number(__ENV.ISSUES_PAGES || 2);
+    const ENABLE_LABELS = (__ENV.ENABLE_LABELS || "true") === "true";
+    const ENABLE_MILESTONES = (__ENV.ENABLE_MILESTONES || "true") === "true";
+
+    // NOTE: do NOT hardcode token in ConfigMap; inject via Secret/ENV
+    const TOKEN = __ENV.GITEA_TOKEN || "";
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      vus: Number(__ENV.VUS || 10),
+      duration: __ENV.DURATION || "10m",
+      thresholds: {
+        http_req_failed:   ["rate<" + TH_FAIL_RATE_MAX],
+        http_req_duration: ["p(95)<" + TH_P95_MS_MAX],
+        checks:            ["rate>" + TH_CHECKS_MIN],
+      },
+    };
+
+    // ----------------------------
+    // tools
+    // ----------------------------
+    function p(name) {
+      return {
+        timeout: "10s",
+        redirects: 5,
+        tags: { name: name, scenario: "web_issues" },
+        headers: {
+          "User-Agent": "k6-gitea-web-issues",
+          Accept: "text/html",
+        },
+      };
+    }
+
+    function apiParams(name) {
+      const headers = {
+        "User-Agent": "k6-gitea-web-issues-setup",
+        Accept: "application/json",
+      };
+      if (TOKEN) {
+        headers.Authorization = "token " + TOKEN;
+      }
+      return {
+        timeout: "10s",
+        tags: { name: name, scenario: "web_issues" },
+        headers: headers,
+      };
+    }
+
+    function pick(arr) {
+      return arr && arr.length ? arr[Math.floor(Math.random() * arr.length)] : null;
+    }
+
+    function formEncode(obj) {
+      const parts = [];
+      for (const k in obj) {
+        parts.push(encodeURIComponent(k) + "=" + encodeURIComponent(String(obj[k])));
+      }
+      return parts.join("&");
+    }
+
+    // ----------------------------
+    // setup(): preload the open issues index pool (avoids parsing HTML)
+    // - TOKEN is required to fetch it reliably (especially for private repositories)
+    // ----------------------------
+    export function setup() {
+      if (!REPO || REPO.indexOf("/") < 0) {
+        return { ok: false, reason: "REPO not set (expected owner/repo)" };
+      }
+
+      const parts = REPO.split("/", 2);
+      const owner = parts[0];
+      const repo = parts[1];
+
+      const issueNumbers = [];
+
+      // If there is no TOKEN: the list page still runs, but the detail-page pool may be empty
+      if (TOKEN) {
+        const r = http.get(
+          BASE_URL + "/api/v1/repos/" + owner + "/" + repo + "/issues?state=open&limit=50",
+          apiParams("setup_open_issues")
+        );
+        if (r.status === 200) {
+          const list = r.json() || [];
+          for (let i = 0; i < list.length; i++) {
+            const x = list[i];
+            // Gitea issue: the number field is the index used in the URL
+            if (x && x.number) issueNumbers.push(x.number);
+          }
+        }
+      }
+
+      return { ok: true, owner: owner, repo: repo, issueNumbers: issueNumbers };
+    }
+
+    // ----------------------------
+    // web login: each VU once (optional)
+    // ----------------------------
+    let loggedIn = false;
+    let loginAttempted = false;
+
+    function ensureWebLogin() {
+      if (loggedIn || loginAttempted) return;
+      loginAttempted = true;
+
+      if (!USERNAME || !PASSWORD) return;
+
+      const loginPage = http.get(BASE_URL + "/user/login", p("web_login_page"));
+      check(loginPage, { "login page <400": (r) => r.status >= 200 && r.status < 400 });
+
+      const doc = parseHTML(loginPage.body);
+      const csrf =
+        doc.find('input[name="_csrf"]').first().attr("value") ||
+        doc.find('meta[name="_csrf"]').first().attr("content") ||
+        "";
+
+      const form = formEncode({ user_name: USERNAME, password: PASSWORD, _csrf: csrf });
+
+      const submitParams = p("web_login_submit");
+      submitParams.headers["Content-Type"] = "application/x-www-form-urlencoded";
+
+      const resp = http.post(BASE_URL + "/user/login", form, submitParams);
+      check(resp, { "login resp <400": (r) => r.status >= 200 && r.status < 400 });
+
+      const home = http.get(BASE_URL + "/", p("web_home_after_login"));
+      loggedIn = check(home, { "not redirect to login": (r) => !(r.url && r.url.indexOf("/user/login") >= 0) });
+    }
+
+    // ----------------------------
+    // default(): Issues read-only flow
+    // ----------------------------
+    export default function (data) {
+      ensureWebLogin();
+
+      if (!data || !data.ok) {
+        group("home", () => {
+          const r = http.get(BASE_URL + "/", p("web_home"));
+          check(r, { "home <400": (res) => res.status >= 200 && res.status < 400 });
+        });
+        sleep(THINK);
+        return;
+      }
+
+      const owner = data.owner;
+      const repo = data.repo;
+
+      group("home", () => {
+        const r = http.get(BASE_URL + "/", p("web_home"));
+        check(r, { "home <400": (res) => res.status >= 200 && res.status < 400 });
+      });
+
+      group("repo_home", () => {
+        const r = http.get(BASE_URL + "/" + owner + "/" + repo, p("web_repo_home"));
+        check(r, { "repo home <400": (res) => res.status >= 200 && res.status < 400 });
+      });
+
+      group("issues_list", () => {
+        const pages = ISSUES_PAGES > 0 ? ISSUES_PAGES : 1;
+        for (let i = 1; i <= pages; i++) {
+          const r = http.get(
+            BASE_URL + "/" + owner + "/" + repo + "/issues?page=" + i,
+            p("web_issues_list_p" + i)
+          );
+          check(r, { "issues list <400": (res) => res.status >= 200 && res.status < 400 });
+        }
+      });
+
+      if (ENABLE_LABELS) {
+        group("labels", () => {
+          const r = http.get(BASE_URL + "/" + owner + "/" + repo + "/labels", p("web_labels"));
+          check(r, { "labels <400": (res) => res.status >= 200 && res.status < 400 });
+        });
+      }
+
+      if (ENABLE_MILESTONES) {
+        group("milestones", () => {
+          const r = http.get(BASE_URL + "/" + owner + "/" + repo + "/milestones", p("web_milestones"));
+          check(r, { "milestones <400": (res) => res.status >= 200 && res.status < 400 });
+        });
+      }
+
+      // issue detail: pick from setup pool
+      const issueNo = pick(data.issueNumbers);
+      if (issueNo) {
+        group("issue_detail", () => {
+          const r = http.get(
+            BASE_URL + "/" + owner + "/" + repo + "/issues/" + issueNo,
+            p("web_issue_detail")
+          );
+          check(r, { "issue detail <400": (res) => res.status >= 200 && res.status < 400 });
+        });
+      } else {
+        group("no_issue_pool", () => {
+          // If there is no token or open issues are empty, keep the read-only flow runnable
+          const r = http.get(BASE_URL + "/" + owner + "/" + repo + "/issues", p("web_issues_list_only"));
+          check(r, { "issues list <400": (res) => res.status >= 200 && res.status < 400 });
+        });
+      }
+
+      sleep(THINK);
+    }

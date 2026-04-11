@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-triage-env
+  namespace: traffic
+data:
+  BASE_URL: "https://rt.example.com" # If there is a WebPath prefix: https://rt.example.com/rt
+  INSECURE_TLS: "true"
+  RT_QUEUE: "Traffic"
+
+  # k6 runtime shape
+  VUS: "6"
+  DURATION: "5m"
+  SLEEP_MIN: "0.1"
+  SLEEP_MAX: "0.6"
+
+  # staff user-pool selection strategy:
+  # roundrobin: each VU maps to staffs[idx] by __VU
+  # random: pick a staff randomly on each iteration
+  STAFF_PICK_MODE: "roundrobin"
+
+  # Deep-read ratio: pick one ticket from search results for detail/history reads
+  DO_DEEP_READ: "true"
+  HISTORY_RATIO: "0.70" # During deep reads, how often to fetch history (0~1)
+
+  # Whether to occasionally fetch the queue list (simulates UI left-nav/init behavior)
+  QUEUES_ALL_EVERY_N: "0" # 0 means disabled; e.g. 20 means fetch once every 20 iterations
+
+  # Pagination (fewer results is usually faster)
+  PER_PAGE: "20"
+
+  # Default sorting (used when the template does not specify ORDER BY)
+  DEFAULT_ORDERBY: "LastUpdated"
+  DEFAULT_ORDER: "DESC"
+
+  # =========================
+  # Thresholds ✅ (tunable)
+  # =========================
+  TH_ENABLE: "true"
+
+  # Global thresholds (your current p95 is about 4s; 4500~5000 is recommended)
+  TH_FAIL_RATE_MAX: "0.01"
+  TH_P95_MS_MAX: "4500"
+
+  # Optional: per-op thresholds (0 = disabled)
+  # If you want to pinpoint which op is slow, enable these and tune them based on real values
+  TH_SEARCH_P95_MS: "0" # tickets_search
+  TH_GET_P95_MS: "0" # ticket_get
+  TH_HIST_P95_MS: "0" # ticket_history
+  TH_QUEUES_P95_MS: "0" # queues_all
+
+  # TicketSQL template rotation (writing ORDER BY is fine; the script strips it automatically)
+  TICKETSQL_TEMPLATES: |-
+    [
+      "Queue='Traffic' AND Status!='deleted' ORDER BY LastUpdated DESC",
+      "Queue='Traffic' AND (Status='open' OR Status='stalled') ORDER BY LastUpdated DESC",
+      "Queue='Traffic' AND Created > '-7 days' AND Status!='deleted' ORDER BY Created DESC",
+      "Queue='Traffic' AND Subject LIKE 'k6-%' AND Status!='deleted' ORDER BY LastUpdated DESC"
+    ]
