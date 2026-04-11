@@ -1,0 +1,60 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-wiki-pageread-job
+  namespace: traffic
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  activeDeadlineSeconds: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        node-role: worker
+      volumes:
+        - name: scripts
+          emptyDir: {}
+        - name: cm-script
+          configMap:
+            name: k6-wiki-pageread-script
+      initContainers:
+        - name: init-scripts
+          image: busybox:1.36
+          command: ["/bin/sh", "-lc"]
+          args:
+            - |
+              set -e
+              mkdir -p /scripts
+              # Dereference the ConfigMap symlink to avoid copying dangling links
+              cp -rvL /cm/. /scripts/
+              ls -lah /scripts
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+            - name: cm-script
+              mountPath: /cm
+      containers:
+        - name: k6
+          image: zot.example.com/mirror/ghcr.io/grafana/k6
+          imagePullPolicy: IfNotPresent
+          command: ["k6", "run", "/scripts/page_read.js"]
+          envFrom:
+            - configMapRef:
+                name: k6-wiki-pageread-env
+          env:
+            - name: WIKI_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: k6-wiki-secret
+                  key: WIKI_TOKEN
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi

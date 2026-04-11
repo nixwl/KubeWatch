@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-wiki-pageslist-env
+  namespace: traffic
+data:
+  # ========= Target =========
+  BASE_URL: "https://wiki.example.com"
+  GRAPHQL_PATH: "/graphql"
+  INSECURE_TLS: "true"
+
+  # ========= User model (stable online users) =========
+  VUS: "1"
+  DURATION: "5m"
+
+  # ========= Human pacing =========
+  THINK_MIN_MS: "200"
+  THINK_MAX_MS: "1200"
+
+  # ========= Query shape =========
+  # An empty LOCALE means the locale parameter is not sent (better compatibility)
+  LOCALE: ""
+  ORDER_BY: "TITLE"
+
+  # ========= HTTP =========
+  TIMEOUT: "30s"
+
+  # ========= Thresholds =========
+  FAIL_RATE_MAX: "0.01"
+  P95_MS_MAX: "1500"

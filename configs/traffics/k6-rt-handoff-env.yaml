@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-handoff-env
+  namespace: traffic
+data:
+  BASE_URL: "https://rt.example.com" # If there is a WebPath prefix: https://rt.example.com/rt
+  INSECURE_TLS: "true"
+  RT_QUEUE: "Traffic"
+
+  # k6 runtime shape
+  VUS: "4"
+  DURATION: "5m"
+  SLEEP_MIN: "0.1"
+  SLEEP_MAX: "0.6"
+
+  # Role selection strategy
+  REQUESTER_PICK_MODE: "roundrobin" # roundrobin | random
+  STAFF_PICK_MODE: "roundrobin" # roundrobin | random
+  EXCLUDE_STAFF_NAMES: "root" # Comma-separated; default excludes root (avoids high-privilege concurrency side effects)
+
+  # Search and pagination
+  PER_PAGE: "20"
+  ORDERBY: "LastUpdated"
+  ORDER: "DESC"
+
+  # Retry to avoid the short window where newly created items cannot be found immediately
+  SEARCH_RETRIES: "6"
+  SEARCH_RETRY_SLEEP: "0.2"
+
+  # Verify after write
+  VERIFY_AFTER_WRITE: "true"
+  HISTORY_RATIO: "0.70"
+
+  # requester follow-up behavior: prefer correspond, then comment if that fails
+  FOLLOWUP_ENABLED: "true"
+  FOLLOWUP_REQUIRED: "false" # true: fail immediately when follow-up fails; false: skip on failure
+
+  # lifecycle: default progression to resolved (if currently new, open first)
+  STATUS_FLOW: |-
+    ["open","stalled","resolved"]
+
+  # cleanup: use PUT Status=deleted (do not use DELETE to avoid 500s)
+  CLEANUP_ENABLED: "true"
+  CLEANUP_STATUS: "deleted"
+
+  # Ticket identifier (for auditing/cleanup)
+  SUBJECT_PREFIX: "k6-handoff"
+
+  # =========================
+  # Thresholds (tunable)
+  # =========================
+  TH_ENABLE: "true"
+  TH_FAIL_RATE_MAX: "0.01"
+  TH_P95_MS_MAX: "4500"
+
+  # Per-op thresholds (0 = disabled)
+  TH_CREATE_P95_MS: "0" # ticket_create
+  TH_SEARCH_P95_MS: "0" # tickets_search
+  TH_GET_P95_MS: "0" # ticket_get
+  TH_COMMENT_P95_MS: "0" # ticket_comment
+  TH_CORRESPOND_P95_MS: "0" # ticket_correspond
+  TH_PUT_STATUS_P95_MS: "0" # ticket_put_status
+  TH_HIST_P95_MS: "0" # ticket_history
+  TH_CLEANUP_P95_MS: "0" # ticket_cleanup

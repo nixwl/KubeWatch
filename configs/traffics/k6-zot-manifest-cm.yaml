@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-zot-manifest
+  namespace: traffic
+data:
+  manifest.js: |
+    import http from "k6/http";
+    import { check } from "k6";
+    import { baseUrl, authHeaders, ACCEPT_MANIFEST, v2Ping, think, envStr, envNum } from "./lib.js";
+
+    export const options = {
+      vus: 1,
+      iterations: envNum("ITERATIONS", 5),
+      insecureSkipTLSVerify: (__ENV.INSECURE_TLS || "true") === "true",
+      discardResponseBodies: true,
+    };
+
+    function headManifest(repo, ref) {
+      const url = `${baseUrl()}/v2/${repo}/manifests/${ref}`;
+      const r = http.request("HEAD", url, null, {
+        headers: authHeaders({ Accept: ACCEPT_MANIFEST }),
+        tags: { op: "manifest_head", repo },
+        timeout: "60s",
+      });
+      check(r, { "manifest HEAD 200": (res) => res.status === 200 });
+      return r;
+    }
+
+    function getManifestJSON(repo, ref) {
+      const url = `${baseUrl()}/v2/${repo}/manifests/${ref}`;
+      const r = http.get(url, {
+        headers: authHeaders({ Accept: ACCEPT_MANIFEST }),
+        responseType: "text",
+        tags: { op: "manifest_get", repo },
+        timeout: "60s",
+      });
+      check(r, { "manifest GET 200": (res) => res.status === 200 });
+      if (r.status !== 200) return null;
+
+      try { return JSON.parse(r.body); } catch (_) { return null; }
+    }
+
+    // Exported for mixed.js to call
+    export function doManifest(repo, tagOrDigest) {
+      headManifest(repo, tagOrDigest);
+
+      const pct = envNum("MANIFEST_GET_PCT", 90);
+      if (Math.random() * 100 >= pct) return null;
+
+      const obj = getManifestJSON(repo, tagOrDigest);
+      if (!obj) return null;
+
+      const mt = String(obj.mediaType || "").toLowerCase();
+      const isIndex = mt.includes("image.index") || mt.includes("manifest.list") || Array.isArray(obj.manifests);
+
+      if (isIndex && Array.isArray(obj.manifests) && obj.manifests.length > 0) {
+        let chosen = obj.manifests.find(m => m.platform && m.platform.os === "linux" && m.platform.architecture === "amd64");
+        if (!chosen) chosen = obj.manifests[0];
+        if (!chosen || !chosen.digest) return null;
+        return doManifest(repo, chosen.digest);
+      }
+
+      if (!obj.config || !obj.config.digest || !Array.isArray(obj.layers)) return null;
+
+      const configDigest = obj.config.digest;
+      const layers = obj.layers.filter(l => l && l.digest).map(l => ({ digest: l.digest, size: l.size || 0 }));
+      return { configDigest, layers };
+    }
+
+    export default function () {
+      const repo = envStr("REPO", "mirror/docker.io/library/nginx");
+      const tag  = envStr("TAG", "latest");
+      v2Ping();
+      doManifest(repo, tag);
+      think();
+    }

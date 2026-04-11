@@ -1,0 +1,120 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-wiki-pageslist-script
+  namespace: traffic
+data:
+  pages_list.js: |
+    import http from "k6/http";
+    import { check, sleep, fail } from "k6";
+
+    function mustEnv(name) {
+      const v = (__ENV[name] || "").trim();
+      if (!v) fail(`missing env: ${name}`);
+      return v;
+    }
+    function normBaseUrl(u) {
+      return u.endsWith("/") ? u.slice(0, -1) : u;
+    }
+    function randInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    // ========= Required =========
+    const BASE_URL = normBaseUrl(mustEnv("BASE_URL"));
+    const WIKI_TOKEN = mustEnv("WIKI_TOKEN"); // Injected from a Secret
+
+    // ========= Optional =========
+    const GRAPHQL_PATH = (__ENV.GRAPHQL_PATH || "/graphql").trim();
+    const INSECURE_TLS = String(__ENV.INSECURE_TLS || "false") === "true";
+
+    const VUS = Number(__ENV.VUS || 10);
+    const DURATION = String(__ENV.DURATION || "10m");
+
+    const THINK_MIN_MS = Number(__ENV.THINK_MIN_MS || 200);
+    const THINK_MAX_MS = Number(__ENV.THINK_MAX_MS || 1200);
+
+    const LOCALE = String(__ENV.LOCALE || "").trim();
+    const ORDER_BY = String(__ENV.ORDER_BY || "TITLE").trim();
+
+    const TIMEOUT = String(__ENV.TIMEOUT || "30s").trim();
+
+    const FAIL_RATE_MAX = Number(__ENV.FAIL_RATE_MAX || 0.01);
+    const P95_MS_MAX = Number(__ENV.P95_MS_MAX || 1500);
+
+    function buildPagesListQuery() {
+      const args = [];
+      // locale may be optional depending on version/config; omit it when empty for better compatibility
+      if (LOCALE) args.push(`locale: "${LOCALE}"`);
+      if (ORDER_BY) args.push(`orderBy: ${ORDER_BY}`);
+      const argStr = args.length ? `(${args.join(", ")})` : "";
+      return `{ pages { list${argStr} { id path title } } }`;
+    }
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      scenarios: {
+        s1_pages_list: {
+          executor: "constant-vus",
+          vus: VUS,
+          duration: DURATION,
+          gracefulStop: "30s"
+        }
+      },
+      thresholds: {
+        http_req_failed: [`rate<${FAIL_RATE_MAX}`],
+        http_req_duration: [`p(95)<${P95_MS_MAX}`]
+      }
+    };
+
+    function postGraphQL(query, tags) {
+      const url = `${BASE_URL}${GRAPHQL_PATH}`;
+      const payload = JSON.stringify({ query });
+      return http.post(url, payload, {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${WIKI_TOKEN}`,
+          "User-Agent": "k6-wikijs-s1-pages-list"
+        },
+        tags,
+        timeout: TIMEOUT
+      });
+    }
+
+    export function setup() {
+      // Preflight check: endpoint reachable, token valid, and response shape normal
+      const q = buildPagesListQuery();
+      const res = postGraphQL(q, { api: "wikijs", op: "pages.list", scenario: "s1", phase: "setup" });
+
+      const ok = check(res, {
+        "setup: http 200": (r) => r.status === 200,
+        "setup: no gql errors": (r) => {
+          try { return !r.json().errors; } catch (_) { return false; }
+        },
+        "setup: pages.list[]": (r) => {
+          try {
+            const j = r.json();
+            const arr = j.data && j.data.pages && j.data.pages.list;
+            return Array.isArray(arr);
+          } catch (_) { return false; }
+        }
+      });
+
+      if (!ok) {
+        fail(`setup failed: status=${res.status}, body=${(res.body || "").slice(0, 500)}`);
+      }
+    }
+
+    export default function () {
+      const q = buildPagesListQuery();
+      const res = postGraphQL(q, { api: "wikijs", op: "pages.list", scenario: "s1" });
+
+      check(res, {
+        "http 200": (r) => r.status === 200,
+        "no gql errors": (r) => {
+          try { return !r.json().errors; } catch (_) { return false; }
+        }
+      });
+
+      sleep(randInt(THINK_MIN_MS, THINK_MAX_MS) / 1000);
+    }

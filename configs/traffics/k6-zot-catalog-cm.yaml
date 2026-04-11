@@ -1,0 +1,24 @@
+# k6-zot-catalog-cm.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-zot-catalog
+  namespace: traffic
+data:
+  catalog.js: |
+    import { v2Ping, catalogOnce, think, envNum } from "./lib.js";
+
+    export const options = {
+      vus: 1,
+      iterations: envNum("ITERATIONS", 5),
+      insecureSkipTLSVerify: (__ENV.INSECURE_TLS || "true") === "true",
+      discardResponseBodies: true,
+    };
+
+    export function doCatalog() { return catalogOnce(); }
+
+    export default function () {
+      v2Ping();
+      doCatalog();
+      think();
+    }

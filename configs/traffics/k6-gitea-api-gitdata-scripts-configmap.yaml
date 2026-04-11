@@ -1,0 +1,255 @@
+# =========================================================
+# k6 - Gitea API GitData (commits / commit-detail / contents / raw)
+# ConfigMap: k6-gitea-api-gitdata
+# Script: api_gitdata.js
+# Namespace: traffic
+#
+# Fixes:
+#  1) commit detail endpoint -> /git/commits/{sha}
+#  2) raw endpoint -> /raw/{filepath}?ref=...
+#  3) encodePath() preserves "/" separators for subdir paths
+#  4) auto-detect default branch if REF is empty (via repo meta)
+#  5) optional RAW_REF_MODE=path fallback for older/buggy ref handling
+# =========================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-gitea-api-gitdata-script
+  namespace: traffic
+data:
+  api_gitdata.js: |
+    import http from "k6/http";
+    import { check, sleep, fail } from "k6";
+
+    /**
+     * ===========================
+     * Gitea API - GitData
+     * Read:
+     *  - commits list (paging)
+     *  - single commit detail (git/commits)
+     *  - contents (optional)
+     *  - raw (optional)
+     *
+     * Notes:
+     *  - REF empty => auto detect default branch by GET /repos/{owner}/{repo}
+     *  - RAW_REF_MODE:
+     *      query (default): /raw/{filepath}?ref=main
+     *      path            : /raw/{ref}/{filepath}   (compat fallback)
+     * ===========================
+     */
+
+    // ========= ENV Basic =========
+    const BASE_URL = (__ENV.BASE_URL || "https://gitea.example.com").replace(/\/+$/, "");
+    const INSECURE_TLS = (__ENV.INSECURE_TLS === "true");
+    const TOKEN = (__ENV.GITEA_TOKEN || "").trim();
+    const OWNER = (__ENV.OWNER || "").trim();
+    const REPO = (__ENV.REPO || "").trim();
+    const THINK = Number(__ENV.SLEEP_SECONDS || 1);
+
+    // ========= ENV Load =========
+    const VUS = Number(__ENV.VUS || 1);
+    const DURATION = __ENV.DURATION || "30s";
+
+    // ========= ENV Page / Switch =========
+    const PAGES = Number(__ENV.PAGES || 2);
+    const PER_PAGE = Number(__ENV.PER_PAGE || 20);
+    const ENABLE_DETAIL = (__ENV.ENABLE_DETAIL || "true") === "true";
+
+    const ENABLE_CONTENTS = (__ENV.ENABLE_CONTENTS || "false") === "true";
+    const ENABLE_RAW = (__ENV.ENABLE_RAW || "false") === "true";
+
+    // file path inside repo, do NOT start with "/"
+    const REPO_FILE_PATH = (__ENV.REPO_FILE_PATH || "").replace(/^\/+/, "");
+
+    // branch / tag / commit SHA; if empty => auto-detect default_branch
+    const REF = (__ENV.REF || "").trim();
+
+    // raw ref mode: "query" (recommended) or "path" (compat)
+    const RAW_REF_MODE = (__ENV.RAW_REF_MODE || "query").trim(); // query|path
+
+    // ========= ENV Threshold =========
+    const THRESH_FAIL_RATE =
+      Number(__ENV.TH_FAIL_RATE_MAX || __ENV.THRESH_FAIL_RATE || 0.01);
+    const THRESH_P95_MS =
+      Number(__ENV.TH_P95_MS_MAX || __ENV.THRESH_P95_MS || 1200);
+    const THRESH_CHECK_RATE =
+      Number(__ENV.TH_CHECKS_MIN || __ENV.THRESH_CHECK_RATE || 0.99);
+
+    export const options = {
+      vus: VUS,
+      duration: DURATION,
+      insecureSkipTLSVerify: INSECURE_TLS,
+      thresholds: {
+        http_req_failed: [`rate<${THRESH_FAIL_RATE}`],
+        http_req_duration: [`p(95)<${THRESH_P95_MS}`],
+        checks: [`rate>${THRESH_CHECK_RATE}`],
+      },
+    };
+
+    function must(cond, msg) {
+      if (!cond) fail(msg);
+    }
+
+    // JSON requests
+    function headersJson() {
+      return {
+        headers: {
+          Authorization: `token ${TOKEN}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "User-Agent": "k6-gitea-api-gitdata",
+        },
+      };
+    }
+
+    // RAW endpoint returns binary/text; Accept should not be JSON
+    function headersRaw() {
+      return {
+        headers: {
+          Authorization: `token ${TOKEN}`,
+          Accept: "application/octet-stream",
+          "User-Agent": "k6-gitea-api-gitdata",
+        },
+      };
+    }
+
+    function url(path) {
+      return `${BASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
+    }
+
+    // Preserve "/" as path separators; encode each segment
+    function encodePath(p) {
+      return p
+        .split("/")
+        .filter((s) => s.length > 0)
+        .map(encodeURIComponent)
+        .join("/");
+    }
+
+    function okStatus(res, allowed, name) {
+      return check(res, {
+        [name + ": status ok"]: (r) => allowed.indexOf(r.status) !== -1,
+      });
+    }
+
+    function pickCommitSha(listJson) {
+      if (!listJson || !Array.isArray(listJson) || listJson.length === 0) return "";
+      return (listJson[0].sha || "").trim();
+    }
+
+    // Resolve effective ref:
+    //  - if ENV REF set => use it
+    //  - else call repo meta and use default_branch
+    export function setup() {
+      must(TOKEN.length > 0, "ENV GITEA_TOKEN is required");
+      must(OWNER.length > 0, "ENV OWNER is required");
+      must(REPO.length > 0, "ENV REPO is required");
+
+      if (ENABLE_CONTENTS || ENABLE_RAW) {
+        must(REPO_FILE_PATH.length > 0, "ENV REPO_FILE_PATH is required when ENABLE_CONTENTS/ENABLE_RAW=true");
+      }
+
+      let effectiveRef = REF;
+      if (!effectiveRef) {
+        const owner = encodeURIComponent(OWNER);
+        const repo = encodeURIComponent(REPO);
+
+        const params = headersJson();
+        params.tags = { name: "api_git_repo_meta" };
+
+        const res = http.get(url(`/api/v1/repos/${owner}/${repo}`), params);
+        okStatus(res, [200], "GET repo meta");
+
+        try {
+          const j = res.json();
+          effectiveRef = (j.default_branch || "").trim();
+        } catch (e) {
+          effectiveRef = "";
+        }
+
+        must(effectiveRef.length > 0, "Cannot detect default_branch from repo meta; set ENV REF explicitly");
+      }
+
+      // validate RAW_REF_MODE
+      must(RAW_REF_MODE === "query" || RAW_REF_MODE === "path", "ENV RAW_REF_MODE must be 'query' or 'path'");
+
+      return {
+        ref: effectiveRef,
+      };
+    }
+
+    export default function (data) {
+      const owner = encodeURIComponent(OWNER);
+      const repo = encodeURIComponent(REPO);
+      const ref = (data && data.ref) ? String(data.ref) : REF;
+      const filePath = encodePath(REPO_FILE_PATH);
+
+      // 1) Commits list
+      let firstSha = "";
+      for (let p = 1; p <= PAGES; p++) {
+        const params = headersJson();
+        params.tags = { name: "api_git_commits_list" };
+
+        const res = http.get(
+          url(`/api/v1/repos/${owner}/${repo}/commits?page=${p}&limit=${PER_PAGE}`),
+          params
+        );
+        okStatus(res, [200], "GET commits list");
+
+        if (p === 1) {
+          try {
+            firstSha = pickCommitSha(res.json());
+          } catch (e) {
+            firstSha = "";
+          }
+        }
+        sleep(THINK);
+      }
+
+      // 2) Commit detail (FIX: /git/commits/{sha})
+      if (ENABLE_DETAIL && firstSha) {
+        const params = headersJson();
+        params.tags = { name: "api_git_commit_detail" };
+
+        const res = http.get(
+          url(`/api/v1/repos/${owner}/${repo}/git/commits/${encodeURIComponent(firstSha)}`),
+          params
+        );
+        okStatus(res, [200], "GET commit detail");
+        sleep(THINK);
+      }
+
+      // 3) Contents (optional)
+      if (ENABLE_CONTENTS && REPO_FILE_PATH) {
+        const refQs = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+        const params = headersJson();
+        params.tags = { name: "api_git_contents" };
+
+        const res = http.get(
+          url(`/api/v1/repos/${owner}/${repo}/contents/${filePath}${refQs}`),
+          params
+        );
+        okStatus(res, [200], "GET contents");
+        sleep(THINK);
+      }
+
+      // 4) Raw (optional)
+      if (ENABLE_RAW && REPO_FILE_PATH) {
+        const params = headersRaw();
+        params.tags = { name: "api_git_raw" };
+
+        let rawUrl = "";
+        if (RAW_REF_MODE === "path") {
+          // compat mode: /raw/{ref}/{filepath}
+          rawUrl = url(`/api/v1/repos/${owner}/${repo}/raw/${encodeURIComponent(ref)}/${filePath}`);
+        } else {
+          // recommended mode: /raw/{filepath}?ref=...
+          const refQs = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+          rawUrl = url(`/api/v1/repos/${owner}/${repo}/raw/${filePath}${refQs}`);
+        }
+
+        const res = http.get(rawUrl, params);
+        okStatus(res, [200], "GET raw");
+        sleep(THINK);
+      }
+    }

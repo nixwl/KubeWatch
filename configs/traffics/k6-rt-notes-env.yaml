@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-notes-env
+  namespace: traffic
+data:
+  BASE_URL: "https://rt.example.com"
+  INSECURE_TLS: "true"
+  RT_QUEUE: "Traffic"
+
+  # k6 runtime shape
+  VUS: "6"
+  DURATION: "5m"
+  SLEEP_MIN: "0.1"
+  SLEEP_MAX: "0.6"
+
+  # staff user-pool selection strategy
+  STAFF_PICK_MODE: "roundrobin" # roundrobin | random
+
+  # Pagination
+  PER_PAGE: "20"
+
+  # Default sorting (used when the template does not specify ORDER BY)
+  DEFAULT_ORDERBY: "LastUpdated"
+  DEFAULT_ORDER: "DESC"
+
+  # Ticket selection strategy from the list: random | first
+  PICK_TICKET_MODE: "random"
+
+  # Note content marker (for troubleshooting/auditing)
+  NOTE_PREFIX: "k6-notes"
+
+  # Comment duration tracking (work time)
+  TIME_TAKEN_MIN: "0"
+  TIME_TAKEN_MAX: "2"
+
+  # Read after write
+  HISTORY_RATIO: "0.80" # Ratio of history reads after comment (0~1)
+  GET_RATIO: "0.20" # Ratio of ticket/:id reads after comment (0~1)
+
+  # TicketSQL templates: by default, prefer the intake pool first (Subject LIKE k6-intake%)
+  # You can add more templates to rotate through
+  TICKETSQL_TEMPLATES: |-
+    [
+      "Queue='Traffic' AND Subject LIKE 'k6-intake%' AND Status!='deleted' ORDER BY LastUpdated DESC",
+      "Queue='Traffic' AND Status!='deleted' ORDER BY LastUpdated DESC"
+    ]
+
+  # =========================
+  # Thresholds (tunable)
+  # =========================
+  TH_ENABLE: "true"
+  TH_FAIL_RATE_MAX: "0.01"
+  TH_P95_MS_MAX: "4500"
+
+  # Per-op thresholds (0 = disabled)
+  TH_SEARCH_P95_MS: "0" # tickets_search
+  TH_COMMENT_P95_MS: "0" # ticket_comment
+  TH_HIST_P95_MS: "0" # ticket_history
+  TH_GET_P95_MS: "0" # ticket_get

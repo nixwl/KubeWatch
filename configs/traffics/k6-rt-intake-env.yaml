@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-intake-env
+  namespace: traffic
+data:
+  BASE_URL: "https://rt.example.com"
+  INSECURE_TLS: "true"
+  RT_QUEUE: "Traffic"
+
+  # k6 runtime shape
+  VUS: "6"
+  DURATION: "5m"
+  SLEEP_MIN: "0.1"
+  SLEEP_MAX: "0.6"
+
+  # requester user-pool selection strategy:
+  # roundrobin: each VU maps to requesters[idx] by __VU
+  # random: pick a requester randomly on each iteration
+  REQUESTER_PICK_MODE: "roundrobin"
+
+  # Read after write: whether to read back ticket/history after creation
+  VERIFY_AFTER_CREATE: "true"
+  HISTORY_RATIO: "0.70" # When verify is enabled, ratio of history fetches (0~1)
+
+  # Subject/Content identifiers (use a stable prefix to make triage/search/cleanup easier)
+  SUBJECT_PREFIX: "k6-intake"
+  CONTENT_PREFIX: "k6-intake-content"
+
+  # Custom fields (optional): JSON object string; keys can be CF.{Name} or CustomFields.{Name}
+  # Example: {"CF.Environment":"traffic","CF.Source":"k6"}
+  CF_JSON: "{}"
+
+  # =========================
+  # Thresholds (tunable)
+  # =========================
+  TH_ENABLE: "true"
+  TH_FAIL_RATE_MAX: "0.01"
+  TH_P95_MS_MAX: "4500"
+
+  # Optional: per-op thresholds (0 = disabled)
+  TH_CREATE_P95_MS: "0" # ticket_create
+  TH_GET_P95_MS: "0" # ticket_get
+  TH_HIST_P95_MS: "0" # ticket_history

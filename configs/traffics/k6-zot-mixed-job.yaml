@@ -1,0 +1,164 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-zot-mixed-job
+  namespace: traffic
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: zot.example.com/mirror/ghcr.io/grafana/k6
+          command: ["k6", "run", "/scripts/mixed.js"]
+          env:
+            # ========= Registry / Auth =========
+            - name: BASE_URL
+              value: "https://zot.example.com"
+            - name: INSECURE_TLS
+              value: "true"
+            - name: ZOT_USER
+              valueFrom:
+                { secretKeyRef: { name: k6-zot-secret, key: username } }
+            - name: ZOT_PASS
+              valueFrom:
+                { secretKeyRef: { name: k6-zot-secret, key: password } }
+
+            # ========= constant-vus only =========
+            - name: DURATION
+              value: "15m"
+
+            # Fixed VUs per scenario (set to 0 to disable a scenario)
+            - name: PULL_VUS
+              value: "1"
+            - name: BROWSE_VUS
+              value: "1"
+            - name: CATALOG_VUS
+              value: "1"
+
+            # ========= Repo / Tag source =========
+            - name: REPO_SPEC_FILE
+              value: "repo-spec.json"
+            - name: DISCOVER_REPOS
+              value: "false"
+            - name: DISCOVER_CATALOG_N
+              value: "1000"
+            - name: DISCOVER_TAGS
+              value: "true"
+            - name: ALLOW_SEED_TAGS
+              value: "true"
+            - name: REQUIRE_TAGS
+              value: "true"
+
+            - name: SHUFFLE_REPOS
+              value: "true"
+            - name: MAX_REPOS
+              value: "50"
+            - name: PULL_MAX_REPOS
+              value: "50"
+            - name: BROWSE_MAX_REPOS
+              value: "50"
+            - name: CATALOG_MAX_REPOS
+              value: "50"
+
+            # ========= Setup-time tag prefetch =========
+            - name: SETUP_TAGS_LIST_N
+              value: "200"
+
+            # ========= Catalog =========
+            - name: CATALOG_PCT
+              value: "0"
+            - name: CATALOG_MAX_CATALOG_N
+              value: "1000"
+
+            # ========= Browse behavior =========
+            - name: BROWSE_TAGS_LIST_PCT
+              value: "30"
+            - name: BROWSE_TAGS_LIST_N
+              value: "200"
+            - name: BROWSE_MANIFEST_GET_PCT
+              value: "70"
+            - name: BROWSE_TAG_RETRY
+              value: "2"
+
+            # ========= Pull behavior =========
+            - name: PULL_REFRESH_TAGS
+              value: "true"
+            - name: PULL_TAGS_LIST_N
+              value: "200"
+            - name: PULL_MANIFEST_GET_PCT
+              value: "95"
+            - name: PULL_TAG_RETRY
+              value: "3"
+
+            # pull blobs
+            - name: PULL_BLOB_GET_PCT
+              value: "80"
+            - name: PULL_BLOB_PARALLELISM
+              value: "2"
+            - name: PULL_FULL_PCT
+              value: "5"
+            - name: PULL_LAYER_SAMPLE_MIN
+              value: "1"
+            - name: PULL_LAYER_SAMPLE_MAX
+              value: "3"
+
+            # ========= Think time =========
+            - name: THINK_MIN
+              value: "0.05"
+            - name: THINK_MAX
+              value: "0.25"
+
+            # ========= Threshold override =========
+            - name: HTTP_REQ_FAILED
+              value: "0.01"
+            - name: HTTP_REQ_P95_MS
+              value: "1200"
+
+          resources:
+            requests: { cpu: "500m", memory: "512Mi" }
+            limits: { cpu: "1500m", memory: "1024Mi" }
+
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+
+      volumes:
+        - name: scripts
+          projected:
+            sources:
+              - configMap:
+                  { name: k6-zot-lib, items: [{ key: lib.js, path: lib.js }] }
+              - configMap:
+                  {
+                    name: k6-zot-ping,
+                    items: [{ key: ping.js, path: ping.js }],
+                  }
+              - configMap:
+                  {
+                    name: k6-zot-catalog,
+                    items: [{ key: catalog.js, path: catalog.js }],
+                  }
+              - configMap:
+                  {
+                    name: k6-zot-tags,
+                    items: [{ key: tags.js, path: tags.js }],
+                  }
+              - configMap:
+                  {
+                    name: k6-zot-manifest,
+                    items: [{ key: manifest.js, path: manifest.js }],
+                  }
+              - configMap:
+                  {
+                    name: k6-zot-blobs,
+                    items: [{ key: blobs.js, path: blobs.js }],
+                  }
+              - configMap:
+                  name: k6-zot-mixed
+                  items:
+                    - { key: mixed.js, path: mixed.js }
+                    - { key: repo-spec.json, path: repo-spec.json }

@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-browseown-env
+  namespace: traffic
+data:
+  BASE_URL: "https://rt.example.com"
+  INSECURE_TLS: "true"
+  RT_QUEUE: "Traffic"
+
+  # k6 runtime shape
+  VUS: "6"
+  DURATION: "5m"
+  SLEEP_MIN: "0.1"
+  SLEEP_MAX: "0.6"
+
+  # requester user-pool selection strategy
+  REQUESTER_PICK_MODE: "roundrobin" # roundrobin | random
+
+  # Pagination
+  PER_PAGE: "20"
+
+  # Default sorting (used when the template does not specify ORDER BY)
+  DEFAULT_ORDERBY: "LastUpdated"
+  DEFAULT_ORDER: "DESC"
+
+  # Pick tickets from the list: random | first
+  PICK_TICKET_MODE: "random"
+
+  # Deep read: details + history
+  DO_DEEP_READ: "true"
+  HISTORY_RATIO: "0.70"
+
+  # Whether to occasionally fetch the queue list (simulates UI left-nav/init behavior)
+  QUEUES_ALL_EVERY_N: "0" # 0 disables it; e.g. 20 means fetch once every 20 iterations
+
+  # TicketSQL templates (only look at "your own" tickets)
+  # Depends on your R1 Subject format: k6-intake | req=requesterX | ...
+  TICKETSQL_TEMPLATES: |-
+    [
+      "Queue='{{QUEUE}}' AND Subject LIKE 'k6-intake%req={{ME}}%' AND Status!='deleted' ORDER BY LastUpdated DESC",
+      "Queue='{{QUEUE}}' AND Subject LIKE 'k6-%req={{ME}}%' AND Status!='deleted' ORDER BY LastUpdated DESC"
+    ]
+
+  # =========================
+  # Thresholds (tunable)
+  # =========================
+  TH_ENABLE: "true"
+  TH_FAIL_RATE_MAX: "0.01"
+  TH_P95_MS_MAX: "4500"
+
+  # Per-op thresholds (0 = disabled)
+  TH_SEARCH_P95_MS: "0" # tickets_search
+  TH_GET_P95_MS: "0" # ticket_get
+  TH_HIST_P95_MS: "0" # ticket_history
+  TH_QUEUES_P95_MS: "0" # queues_all

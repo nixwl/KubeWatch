@@ -1,0 +1,23 @@
+# k6-zot-ping-cm.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-zot-ping
+  namespace: traffic
+data:
+  ping.js: |
+    import { v2Ping, think, envNum } from "./lib.js";
+
+    export const options = {
+      vus: 1,
+      iterations: envNum("ITERATIONS", 10),
+      insecureSkipTLSVerify: (__ENV.INSECURE_TLS || "true") === "true",
+      discardResponseBodies: true,
+    };
+
+    export function doPing() { return v2Ping(); }
+
+    export default function () {
+      doPing();
+      think();
+    }

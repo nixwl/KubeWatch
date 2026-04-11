@@ -1,0 +1,226 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-rt-mixed-job
+  namespace: traffic
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1800 # 30m: includes init + 20m execution + buffer
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        node-role: worker
+
+      volumes:
+        - name: scripts
+          emptyDir: {}
+
+        - name: cm-preflight
+          configMap: { name: k6-rt-preflight-script }
+        - name: cm-intake
+          configMap: { name: k6-rt-intake-script }
+        - name: cm-browseown
+          configMap: { name: k6-rt-browseown-script }
+        - name: cm-triage
+          configMap: { name: k6-rt-triage-script }
+        - name: cm-notes
+          configMap: { name: k6-rt-notes-script }
+        - name: cm-update
+          configMap: { name: k6-rt-update-script }
+        - name: cm-workflow
+          configMap: { name: k6-rt-workflow-script }
+        - name: cm-followup
+          configMap: { name: k6-rt-followup-script }
+        - name: cm-handoff
+          configMap: { name: k6-rt-handoff-script }
+        - name: cm-lifecycle
+          configMap: { name: k6-rt-lifecycle-script }
+        - name: cm-cleanup
+          configMap: { name: k6-rt-cleanup-script }
+
+        - name: cm-mix
+          configMap: { name: k6-rt-mix-script }
+
+        - name: users
+          secret:
+            secretName: k6-rt-users
+
+      initContainers:
+        - name: assemble-scripts
+          image: rancher/mirrored-library-busybox:1.36.1
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eux
+
+              mkdir -p /scripts /scripts/data
+
+              echo "[assemble] /cm dirs:"
+              ls -lah /cm
+              echo "[assemble] /users:"
+              ls -lah /users
+
+              # Copy helper: copy only visible keys, and dereference symlinks (-L)
+              copy_cm() {
+                name="$1"
+                src="/cm/${name}"
+                echo "[assemble] copy from ${src}"
+                ls -lah "${src}"
+                # * will not match hidden ..data / ..2026... entries; -L copies real file contents
+                cp -L "${src}"/* /scripts/
+              }
+
+              copy_cm preflight
+              copy_cm intake
+              copy_cm browseown
+              copy_cm triage
+              copy_cm notes
+              copy_cm update
+              copy_cm workflow
+              copy_cm followup
+              copy_cm handoff
+              copy_cm lifecycle
+              copy_cm cleanup
+              copy_cm mix
+
+              # users.json is also a symlink; dereference it
+              test -f /users/users.json
+              cp -L /users/users.json /scripts/data/users.json
+
+              # ---- patch files to avoid env collisions in one k6 process ----
+              # Ensure base files exist (now they should be real files, not broken symlinks)
+              ls -lah /scripts
+
+              test -f /scripts/followup.js
+              cp /scripts/followup.js  /scripts/followup_mix.js
+              sed -i 's/__ENV\.MODE/__ENV.FOLLOWUP_MODE/g' /scripts/followup_mix.js
+
+              test -f /scripts/lifecycle.js
+              cp /scripts/lifecycle.js /scripts/lifecycle_mix.js
+              sed -i 's/__ENV\.MODE/__ENV.LIFECYCLE_MODE/g' /scripts/lifecycle_mix.js
+
+              test -f /scripts/preflight.js
+              cp /scripts/preflight.js /scripts/preflight_mix.js
+              sed -i 's/__ENV\.SUBJECT_PREFIX/__ENV.PREFLIGHT_SUBJECT_PREFIX/g' /scripts/preflight_mix.js
+
+              test -f /scripts/intake.js
+              cp /scripts/intake.js    /scripts/intake_mix.js
+              sed -i 's/__ENV\.SUBJECT_PREFIX/__ENV.INTAKE_SUBJECT_PREFIX/g' /scripts/intake_mix.js
+
+              test -f /scripts/workflow.js
+              cp /scripts/workflow.js  /scripts/workflow_mix.js
+              sed -i 's/__ENV\.SUBJECT_PREFIX/__ENV.WORKFLOW_SUBJECT_PREFIX/g' /scripts/workflow_mix.js
+
+              # sanity check: mixed entry must exist (adjust here if your actual filename differs)
+              test -f /scripts/rt_mix.js
+
+              echo "[assemble] OK"
+              ls -lah /scripts /scripts/data
+
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+
+            - name: cm-preflight
+              mountPath: /cm/preflight
+              readOnly: true
+            - name: cm-intake
+              mountPath: /cm/intake
+              readOnly: true
+            - name: cm-browseown
+              mountPath: /cm/browseown
+              readOnly: true
+            - name: cm-triage
+              mountPath: /cm/triage
+              readOnly: true
+            - name: cm-notes
+              mountPath: /cm/notes
+              readOnly: true
+            - name: cm-update
+              mountPath: /cm/update
+              readOnly: true
+            - name: cm-workflow
+              mountPath: /cm/workflow
+              readOnly: true
+            - name: cm-followup
+              mountPath: /cm/followup
+              readOnly: true
+            - name: cm-handoff
+              mountPath: /cm/handoff
+              readOnly: true
+            - name: cm-lifecycle
+              mountPath: /cm/lifecycle
+              readOnly: true
+            - name: cm-cleanup
+              mountPath: /cm/cleanup
+              readOnly: true
+
+            - name: cm-mix
+              mountPath: /cm/mix
+              readOnly: true
+
+            - name: users
+              mountPath: /users
+              readOnly: true
+
+      containers:
+        - name: k6
+          image: ghcr.io/grafana/k6:0.49.0
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ceu"]
+          args:
+            - |
+              ts="$(date -u +%Y%m%dT%H%M%SZ)"
+              hour="$(date +%H)"
+
+              PROFILE="normal"
+              export PROFILE
+
+              export BASE_URL="${BASE_URL:-https://rt.example.com}"
+              export INSECURE_TLS="${INSECURE_TLS:-true}"
+              export RT_QUEUE="${RT_QUEUE:-Traffic}"
+
+              export DURATION="20m"
+
+              export FOLLOWUP_MODE="${FOLLOWUP_MODE:-correspond}"
+              export LIFECYCLE_MODE="${LIFECYCLE_MODE:-cycle}"
+
+              export PREFLIGHT_SUBJECT_PREFIX="${PREFLIGHT_SUBJECT_PREFIX:-k6-rt-preflight}"
+              export INTAKE_SUBJECT_PREFIX="${INTAKE_SUBJECT_PREFIX:-k6-intake}"
+              export WORKFLOW_SUBJECT_PREFIX="${WORKFLOW_SUBJECT_PREFIX:-k6-workflow}"
+
+              export TICKETSQL_TEMPLATES="${TICKETSQL_TEMPLATES:-[
+                \"Queue='Traffic' AND Subject LIKE 'k6-intake%' AND Status!='deleted' ORDER BY LastUpdated DESC\",
+                \"Queue='Traffic' AND Subject LIKE 'k6-workflow%' AND Status!='deleted' ORDER BY LastUpdated DESC\",
+                \"Queue='Traffic' AND Subject LIKE 'k6-%' AND Status!='deleted' ORDER BY LastUpdated DESC\"
+              ]}"
+
+              export MIX_VUS_REQUESTERS="1"
+              export MIX_VUS_STAFFS="1"
+
+              export CLEANUP_ENABLED="false"
+              export MIX_VUS_CLEANUP="0"
+
+              export TH_ENABLE="false"
+
+              echo "[runner] ts=${ts} hour=${hour} profile=${PROFILE} duration=${DURATION}"
+              echo "[runner] base_url=${BASE_URL} queue=${RT_QUEUE}"
+              echo "[runner] vus req=${MIX_VUS_REQUESTERS} staff=${MIX_VUS_STAFFS} cleanup=${MIX_VUS_CLEANUP}"
+
+              cd /scripts
+              k6 run ./rt_mix.js --tag profile="${PROFILE}" --tag hour="${hour}"
+
+          env:
+            - name: BASE_URL
+              value: "https://rt.example.com"
+            - name: INSECURE_TLS
+              value: "true"
+            - name: RT_QUEUE
+              value: "Traffic"
+
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true

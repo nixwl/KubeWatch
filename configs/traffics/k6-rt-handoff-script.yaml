@@ -1,0 +1,361 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-handoff-script
+  namespace: traffic
+data:
+  handoff.js: |-
+    import http from "k6/http";
+    import { check, fail, sleep } from "k6";
+    import { SharedArray } from "k6/data";
+
+    const BASE_URL = __ENV.BASE_URL;
+    const INSECURE_TLS = (__ENV.INSECURE_TLS || "true").toLowerCase() === "true";
+    const RT_QUEUE = (__ENV.RT_QUEUE || "Traffic").trim();
+
+    const VUS = parseInt(__ENV.VUS || "4", 10);
+    const DURATION = __ENV.DURATION || "5m";
+    const SLEEP_MIN = parseFloat(__ENV.SLEEP_MIN || "0.1");
+    const SLEEP_MAX = parseFloat(__ENV.SLEEP_MAX || "0.6");
+
+    const REQUESTER_PICK_MODE = (__ENV.REQUESTER_PICK_MODE || "roundrobin").toLowerCase();
+    const STAFF_PICK_MODE = (__ENV.STAFF_PICK_MODE || "roundrobin").toLowerCase();
+    const EXCLUDE_STAFF_NAMES = (__ENV.EXCLUDE_STAFF_NAMES || "")
+      .split(",").map(s => s.trim()).filter(Boolean);
+
+    const PER_PAGE = parseInt(__ENV.PER_PAGE || "20", 10);
+    const ORDERBY = (__ENV.ORDERBY || "LastUpdated").trim();
+    const ORDER = (__ENV.ORDER || "DESC").trim().toUpperCase();
+
+    const SEARCH_RETRIES = parseInt(__ENV.SEARCH_RETRIES || "6", 10);
+    const SEARCH_RETRY_SLEEP = parseFloat(__ENV.SEARCH_RETRY_SLEEP || "0.2");
+
+    const VERIFY_AFTER_WRITE = (__ENV.VERIFY_AFTER_WRITE || "true").toLowerCase() === "true";
+    const HISTORY_RATIO = parseFloat(__ENV.HISTORY_RATIO || "0.7");
+
+    const FOLLOWUP_ENABLED = (__ENV.FOLLOWUP_ENABLED || "true").toLowerCase() === "true";
+    const FOLLOWUP_REQUIRED = (__ENV.FOLLOWUP_REQUIRED || "false").toLowerCase() === "true";
+
+    const STATUS_FLOW = (() => {
+      try { return JSON.parse(__ENV.STATUS_FLOW || "[]"); } catch (_) { return []; }
+    })();
+
+    const CLEANUP_ENABLED = (__ENV.CLEANUP_ENABLED || "true").toLowerCase() === "true";
+    const CLEANUP_STATUS = (__ENV.CLEANUP_STATUS || "deleted").trim();
+
+    const SUBJECT_PREFIX = (__ENV.SUBJECT_PREFIX || "k6-handoff").trim();
+
+    // ===== thresholds (same style as triage: 0 = disabled) =====
+    function envBool(k, defVal) {
+      const v = (__ENV[k] ?? String(defVal)).toString().toLowerCase();
+      return v === "true" || v === "1" || v === "yes" || v === "y";
+    }
+    function envFloat(k, defVal) {
+      const v = parseFloat(__ENV[k]);
+      return Number.isFinite(v) ? v : defVal;
+    }
+    function envInt(k, defVal) {
+      const v = parseInt(__ENV[k], 10);
+      return Number.isFinite(v) ? v : defVal;
+    }
+
+    const TH_ENABLE = envBool("TH_ENABLE", true);
+    const TH_FAIL_RATE_MAX = envFloat("TH_FAIL_RATE_MAX", 0.01);
+    const TH_P95_MS_MAX = envInt("TH_P95_MS_MAX", 4500);
+
+    const TH_CREATE_P95_MS = envInt("TH_CREATE_P95_MS", 0);
+    const TH_SEARCH_P95_MS = envInt("TH_SEARCH_P95_MS", 0);
+    const TH_GET_P95_MS = envInt("TH_GET_P95_MS", 0);
+    const TH_COMMENT_P95_MS = envInt("TH_COMMENT_P95_MS", 0);
+    const TH_CORRESPOND_P95_MS = envInt("TH_CORRESPOND_P95_MS", 0);
+    const TH_PUT_STATUS_P95_MS = envInt("TH_PUT_STATUS_P95_MS", 0);
+    const TH_HIST_P95_MS = envInt("TH_HIST_P95_MS", 0);
+    const TH_CLEANUP_P95_MS = envInt("TH_CLEANUP_P95_MS", 0);
+
+    function buildThresholds() {
+      if (!TH_ENABLE) return {};
+      const t = {
+        http_req_failed:   [`rate<${TH_FAIL_RATE_MAX}`],
+        http_req_duration: [`p(95)<${TH_P95_MS_MAX}`],
+      };
+      if (TH_CREATE_P95_MS > 0)     t[`http_req_duration{op:ticket_create}`]     = [`p(95)<${TH_CREATE_P95_MS}`];
+      if (TH_SEARCH_P95_MS > 0)     t[`http_req_duration{op:tickets_search}`]    = [`p(95)<${TH_SEARCH_P95_MS}`];
+      if (TH_GET_P95_MS > 0)        t[`http_req_duration{op:ticket_get}`]        = [`p(95)<${TH_GET_P95_MS}`];
+      if (TH_COMMENT_P95_MS > 0)    t[`http_req_duration{op:ticket_comment}`]    = [`p(95)<${TH_COMMENT_P95_MS}`];
+      if (TH_CORRESPOND_P95_MS > 0) t[`http_req_duration{op:ticket_correspond}`] = [`p(95)<${TH_CORRESPOND_P95_MS}`];
+      if (TH_PUT_STATUS_P95_MS > 0) t[`http_req_duration{op:ticket_put_status}`] = [`p(95)<${TH_PUT_STATUS_P95_MS}`];
+      if (TH_HIST_P95_MS > 0)       t[`http_req_duration{op:ticket_history}`]    = [`p(95)<${TH_HIST_P95_MS}`];
+      if (TH_CLEANUP_P95_MS > 0)    t[`http_req_duration{op:ticket_cleanup}`]    = [`p(95)<${TH_CLEANUP_P95_MS}`];
+      return t;
+    }
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      vus: VUS,
+      duration: DURATION,
+      thresholds: buildThresholds(),
+    };
+
+    const USERS = new SharedArray("users", () => [JSON.parse(open("./data/users.json"))])[0];
+
+    function hdr(token, tags) {
+      return {
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `token ${token}`,
+        },
+        tags: tags || {},
+      };
+    }
+
+    function must(res, name) {
+      const ok = check(res, { [`${name} status`]: (r) => r.status >= 200 && r.status < 400 });
+      if (!ok) fail(`${name} failed: status=${res.status} body=${(res.body || "").slice(0, 400)}`);
+    }
+
+    function ok(res) { return res.status >= 200 && res.status < 400; }
+
+    function j(res) { try { return res.json(); } catch (_) { return null; } }
+
+    function randBetween(a, b) { return a + Math.random() * (b - a); }
+
+    function pickRequester() {
+      const arr = USERS.requesters || [];
+      if (!arr.length) fail("empty requesters pool in users.json");
+      if (REQUESTER_PICK_MODE === "random") return arr[Math.floor(Math.random() * arr.length)];
+      return arr[(__VU - 1) % arr.length];
+    }
+
+    function staffsFiltered() {
+      const arr = (USERS.staffs || []).filter(u => u && u.name && u.token);
+      if (!arr.length) fail("empty staffs pool in users.json");
+      if (!EXCLUDE_STAFF_NAMES.length) return arr;
+      const ex = new Set(EXCLUDE_STAFF_NAMES);
+      const out = arr.filter(u => !ex.has(u.name));
+      if (!out.length) fail(`all staffs excluded by EXCLUDE_STAFF_NAMES=${EXCLUDE_STAFF_NAMES.join(",")}`);
+      return out;
+    }
+
+    function pickStaff() {
+      const arr = staffsFiltered();
+      if (STAFF_PICK_MODE === "random") return arr[Math.floor(Math.random() * arr.length)];
+      return arr[(__VU - 1) % arr.length];
+    }
+
+    function ticketIdFrom(obj, res) {
+      if (obj && obj.id) return parseInt(obj.id, 10);
+      const u = (obj && obj._url) ? String(obj._url) : "";
+      let m = u.match(/\/ticket\/(\d+)\b/);
+      if (m) return parseInt(m[1], 10);
+      const loc = res && res.headers && (res.headers.Location || res.headers.location);
+      if (loc) {
+        m = String(loc).match(/\/ticket\/(\d+)\b/);
+        if (m) return parseInt(m[1], 10);
+      }
+      return null;
+    }
+
+    function extractTicketIds(items) {
+      const ids = [];
+      for (const it of (items || [])) {
+        if (it && typeof it.id === "number") { ids.push(it.id); continue; }
+        const u = it && it._url ? String(it._url) : "";
+        const m = u.match(/\/ticket\/(\d+)\b/);
+        if (m) ids.push(parseInt(m[1], 10));
+      }
+      return ids;
+    }
+
+    function getStatus(obj) {
+      if (!obj || typeof obj !== "object") return "";
+      const v = (obj.Status ?? obj.status ?? "");
+      return String(v || "").trim();
+    }
+
+    function searchByMarker(user, marker) {
+      // Rely only on the marker to avoid TicketSQL quoting/escaping issues from the full Subject string
+      const q = `Queue='${RT_QUEUE}' AND Subject LIKE '${SUBJECT_PREFIX}%rnd=${marker}%' AND Status!='deleted'`;
+      const url = `${BASE_URL}/REST/2.0/tickets?query=${encodeURIComponent(q)}&orderby=${encodeURIComponent(ORDERBY)}&order=${encodeURIComponent(ORDER)}&per_page=${PER_PAGE}`;
+      const r = http.get(url, hdr(user.token, { scenario: "handoff", role: user.role, op: "tickets_search", queue: RT_QUEUE }));
+      must(r, "GET /tickets?query (marker)");
+      const s = j(r);
+      const ids = extractTicketIds(s && s.items);
+      return ids && ids.length ? ids[0] : null;
+    }
+
+    function putStatus(user, id, status, roleTag) {
+      const r = http.put(
+        `${BASE_URL}/REST/2.0/ticket/${id}`,
+        JSON.stringify({ Status: status }),
+        hdr(user.token, { scenario: "handoff", role: roleTag, op: "ticket_put_status", queue: RT_QUEUE, to: status })
+      );
+      must(r, `PUT Status=${status}`);
+    }
+
+    function ensureResolved(staff, id) {
+      // Read the current status and try to advance according to STATUS_FLOW; if STATUS_FLOW is empty, default to open->resolved
+      const flow = (STATUS_FLOW && STATUS_FLOW.length) ? STATUS_FLOW : ["open", "resolved"];
+
+      let rGet = http.get(
+        `${BASE_URL}/REST/2.0/ticket/${id}`,
+        hdr(staff.token, { scenario: "handoff", role: "staff", op: "ticket_get", queue: RT_QUEUE })
+      );
+      must(rGet, "GET /ticket/:id (pre-status)");
+      let status = getStatus(j(rGet) || {});
+
+      for (const to of flow) {
+        if (!to) continue;
+
+        // Common case: a newly created ticket has status=new, so going directly to stalled/resolved may fail; open it first
+        if (status === "new" && to !== "open") {
+          putStatus(staff, id, "open", "staff");
+          status = "open";
+        }
+
+        if (status === to) continue;
+
+        putStatus(staff, id, to, "staff");
+        status = to;
+      }
+    }
+
+    function postComment(user, id, content, roleTag) {
+      const r = http.post(
+        `${BASE_URL}/REST/2.0/ticket/${id}/comment`,
+        JSON.stringify({ Content: content, ContentType: "text/plain", TimeTaken: 1 }),
+        hdr(user.token, { scenario: "handoff", role: roleTag, op: "ticket_comment", queue: RT_QUEUE })
+      );
+      must(r, "POST /comment");
+    }
+
+    function postCorrespond(user, id, content, roleTag) {
+      const r = http.post(
+        `${BASE_URL}/REST/2.0/ticket/${id}/correspond`,
+        JSON.stringify({ Content: content, ContentType: "text/plain", TimeTaken: 1 }),
+        hdr(user.token, { scenario: "handoff", role: roleTag, op: "ticket_correspond", queue: RT_QUEUE })
+      );
+      return r;
+    }
+
+    function verifyReads(user, id, roleTag) {
+      if (!VERIFY_AFTER_WRITE) return;
+
+      const r2 = http.get(
+        `${BASE_URL}/REST/2.0/ticket/${id}`,
+        hdr(user.token, { scenario: "handoff", role: roleTag, op: "ticket_get", queue: RT_QUEUE })
+      );
+      must(r2, "GET /ticket/:id (verify)");
+
+      if (Math.random() < HISTORY_RATIO) {
+        const r3 = http.get(
+          `${BASE_URL}/REST/2.0/ticket/${id}/history`,
+          hdr(user.token, { scenario: "handoff", role: roleTag, op: "ticket_history", queue: RT_QUEUE })
+        );
+        must(r3, "GET /ticket/:id/history (verify)");
+      }
+    }
+
+    export default function () {
+      if (!BASE_URL) fail("BASE_URL is required");
+
+      const req = pickRequester();
+      const staff = pickStaff();
+
+      // 0) Generate a unique marker for this run (used by staff/requester searches to locate the same ticket)
+      const marker = Math.random().toString(16).slice(2);
+
+      // 1) requester creates the ticket
+      const subject = `${SUBJECT_PREFIX} req=${req.name} vu=${__VU} iter=${__ITER} rnd=${marker}`;
+      const content = `handoff create by ${req.name}; rnd=${marker}`;
+
+      const rCreate = http.post(
+        `${BASE_URL}/REST/2.0/ticket`,
+        JSON.stringify({ Queue: RT_QUEUE, Subject: subject, Content: content }),
+        hdr(req.token, { scenario: "handoff", role: "requester", op: "ticket_create", queue: RT_QUEUE })
+      );
+      must(rCreate, "POST /ticket (create)");
+
+      const created = j(rCreate);
+      let id = ticketIdFrom(created, rCreate);
+      if (!id) {
+        // If the create response does not contain an id, rely on the later search to locate it
+        id = null;
+      }
+
+      // 2) staff searches for the ticket by marker (with retries)
+      let sid = null;
+      for (let i = 0; i < SEARCH_RETRIES; i++) {
+        sid = searchByMarker({ token: staff.token, role: "staff" }, marker);
+        if (sid) break;
+        sleep(SEARCH_RETRY_SLEEP);
+      }
+      if (!sid) fail(`staff cannot find ticket by marker=${marker}`);
+
+      // 3) staff deep-read + comment + correspond
+      const rGetS = http.get(
+        `${BASE_URL}/REST/2.0/ticket/${sid}`,
+        hdr(staff.token, { scenario: "handoff", role: "staff", op: "ticket_get", queue: RT_QUEUE })
+      );
+      must(rGetS, "GET /ticket/:id (staff)");
+
+      postComment(staff, sid, `handoff comment by ${staff.name}; rnd=${marker}`, "staff");
+
+      const rCorrS = postCorrespond(staff, sid, `handoff correspond by ${staff.name}; rnd=${marker}`, "staff");
+      must(rCorrS, "POST /correspond (staff)");
+
+      verifyReads(staff, sid, "staff");
+
+      // 4) staff advances the lifecycle to resolved
+      ensureResolved(staff, sid);
+      verifyReads(staff, sid, "staff");
+
+      // 5) requester browses their own ticket: search -> open -> history; then follow up
+      let rid = null;
+      for (let i = 0; i < SEARCH_RETRIES; i++) {
+        rid = searchByMarker({ token: req.token, role: "requester" }, marker);
+        if (rid) break;
+        sleep(SEARCH_RETRY_SLEEP);
+      }
+      if (!rid) fail(`requester cannot find own ticket by marker=${marker}`);
+
+      const rGetR = http.get(
+        `${BASE_URL}/REST/2.0/ticket/${rid}`,
+        hdr(req.token, { scenario: "handoff", role: "requester", op: "ticket_get", queue: RT_QUEUE })
+      );
+      must(rGetR, "GET /ticket/:id (requester)");
+
+      if (Math.random() < HISTORY_RATIO) {
+        const rHistR = http.get(
+          `${BASE_URL}/REST/2.0/ticket/${rid}/history`,
+          hdr(req.token, { scenario: "handoff", role: "requester", op: "ticket_history", queue: RT_QUEUE })
+        );
+        must(rHistR, "GET /ticket/:id/history (requester)");
+      }
+
+      if (FOLLOWUP_ENABLED) {
+        const rr = postCorrespond(req, rid, `handoff follow-up by ${req.name}; rnd=${marker}`, "requester");
+        if (!ok(rr)) {
+          // Fallback to comment
+          const rc = http.post(
+            `${BASE_URL}/REST/2.0/ticket/${rid}/comment`,
+            JSON.stringify({ Content: `handoff follow-up(comment) by ${req.name}; rnd=${marker}`, ContentType: "text/plain", TimeTaken: 1 }),
+            hdr(req.token, { scenario: "handoff", role: "requester", op: "ticket_comment", queue: RT_QUEUE })
+          );
+          if (FOLLOWUP_REQUIRED) must(rc, "POST /comment (requester fallback)");
+        }
+        verifyReads(req, rid, "requester");
+      }
+
+      // 6) cleanup: PUT Status=deleted (avoid REST2 DELETE 500s)
+      if (CLEANUP_ENABLED) {
+        putStatus(staff, sid, CLEANUP_STATUS, "staff");
+        const rClean = http.get(
+          `${BASE_URL}/REST/2.0/ticket/${sid}`,
+          hdr(staff.token, { scenario: "handoff", role: "staff", op: "ticket_cleanup", queue: RT_QUEUE })
+        );
+        must(rClean, "GET /ticket/:id (post-cleanup)");
+      }
+
+      sleep(randBetween(SLEEP_MIN, SLEEP_MAX));
+    }

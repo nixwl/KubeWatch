@@ -1,0 +1,266 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-gitea-web-browse-scripts
+  namespace: traffic
+data:
+  web_browse.js: |
+    import http from "k6/http";
+    import { check, sleep, group } from "k6";
+    import { parseHTML } from "k6/html";
+
+    // ----------------------------
+    // global config environment
+    // ----------------------------
+    const TH_FAIL_RATE_MAX = String(__ENV.TH_FAIL_RATE_MAX || "0.01");
+    const TH_P95_MS_MAX    = String(__ENV.TH_P95_MS_MAX || "1200");
+    const TH_CHECKS_MIN    = String(__ENV.TH_CHECKS_MIN || "0.99");
+    const INSECURE_TLS = (__ENV.INSECURE_TLS === "true");
+    const BASE_URL = String(__ENV.BASE_URL || "https://gitea.example.com").replace(/\/+$/, "");
+    const THINK = Number(__ENV.SLEEP_SECONDS || 1);
+    const USERNAME = __ENV.GITEA_USERNAME || "";
+    const PASSWORD = __ENV.GITEA_PASSWORD || "";
+    const REPO_FALLBACK = __ENV.REPO || "";
+
+    // Browse behavior switches (enabled by default to keep it lightweight)
+    const ENABLE_REPO_HOME  = (__ENV.ENABLE_REPO_HOME  || "true") === "true";
+    const ENABLE_ISSUES     = (__ENV.ENABLE_ISSUES     || "true") === "true";
+    const ENABLE_PULLS      = (__ENV.ENABLE_PULLS      || "true") === "true";
+    const ENABLE_COMMITS    = (__ENV.ENABLE_COMMITS    || "false") === "true";
+
+    // Explore pagination
+    const EXPLORE_PAGES = Number(__ENV.EXPLORE_PAGES || 2);
+    const TOKEN = __ENV.GITEA_TOKEN || "";
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      vus: Number(__ENV.VUS || 10),
+      duration: __ENV.DURATION || "10m",
+      thresholds: {
+        http_req_failed:   ["rate<" + TH_FAIL_RATE_MAX],
+        http_req_duration: ["p(95)<" + TH_P95_MS_MAX],
+        checks:            ["rate>" + TH_CHECKS_MIN],
+      },
+    };
+
+    // ----------------------------
+    // functional tools
+    // ----------------------------
+    function p(name) {
+      return {
+        timeout: "10s",
+        redirects: 5,
+        tags: { name: name, scenario: "web_browse" },
+        headers: {
+          "User-Agent": "k6-gitea-web-browse",
+          Accept: "text/html",
+        },
+      };
+    }
+
+    // compatible headers construction (no object spread)
+    function apiParams(name) {
+      const headers = {
+        "User-Agent": "k6-gitea-web-browse-setup",
+        Accept: "application/json",
+      };
+      if (TOKEN) {
+        headers.Authorization = "token " + TOKEN;
+      }
+      return {
+        timeout: "10s",
+        tags: { name: name, scenario: "web_browse" },
+        headers: headers,
+      };
+    }
+
+    function pick(arr) {
+      return arr && arr.length ? arr[Math.floor(Math.random() * arr.length)] : null;
+    }
+
+    function escapePath(path) {
+      return String(path)
+        .split("/")
+        .map((seg) => encodeURIComponent(seg))
+        .join("/");
+    }
+
+    // replace http.urlencode (not available in your k6 runtime)
+    function formEncode(obj) {
+      const parts = [];
+      for (const k in obj) {
+        parts.push(encodeURIComponent(k) + "=" + encodeURIComponent(String(obj[k])));
+      }
+      return parts.join("&");
+    }
+
+    // ----------------------------
+    // Try preloading a repo pool via the API (for the "browse around -> open a repo" flow)
+    // Priority order:
+    // 1) With TOKEN: /api/v1/user/repos?limit=50
+    // 2) Without TOKEN or on failure: /api/v1/repos/search?q=&limit=50
+    // 3) If it still fails: use REPO_FALLBACK
+    // ----------------------------
+    export function setup() {
+      const repos = [];
+
+      // 1) token user repository list
+      if (TOKEN) {
+        const r1 = http.get(BASE_URL + "/api/v1/user/repos?limit=50", apiParams("setup_user_repos"));
+        if (r1.status === 200) {
+          const list = r1.json() || [];
+          for (let i = 0; i < list.length; i++) {
+            const x = list[i];
+            if (x && x.owner && x.owner.login && x.name) {
+              repos.push({
+                owner: x.owner.login,
+                repo: x.name,
+                branch: x.default_branch || "main",
+              });
+            }
+          }
+        }
+      }
+
+      // 2) fallback: global repo search (some environments may require public repos or permission)
+      if (!repos.length) {
+        const r2 = http.get(BASE_URL + "/api/v1/repos/search?q=&limit=50", apiParams("setup_search_repos"));
+        if (r2.status === 200) {
+          const body = r2.json() || {};
+          const list = body.data ? body.data : body; // compatibility: search returns either {data:[...]} or a plain array
+          if (list && list.length) {
+            for (let j = 0; j < list.length; j++) {
+              const y = list[j];
+              if (y && y.owner && y.owner.login && y.name) {
+                repos.push({
+                  owner: y.owner.login,
+                  repo: y.name,
+                  branch: y.default_branch || "main",
+                });
+              }
+            }
+          }
+        }
+      }
+
+      // 3) final fallback: use the specified REPO
+      if (!repos.length && REPO_FALLBACK && REPO_FALLBACK.indexOf("/") > 0) {
+        const parts = REPO_FALLBACK.split("/", 2);
+        repos.push({ owner: parts[0], repo: parts[1], branch: (__ENV.BRANCH || "main") });
+      }
+
+      return { ok: true, repos: repos };
+    }
+
+    // ----------------------------
+    // web login: each VU once (optional)
+    // ----------------------------
+    let loggedIn = false;
+    let loginAttempted = false;
+
+    function ensureWebLogin() {
+      if (loggedIn || loginAttempted) return;
+      loginAttempted = true;
+
+      if (!USERNAME || !PASSWORD) return;
+
+      const loginPage = http.get(BASE_URL + "/user/login", p("web_login_page"));
+      check(loginPage, { "login page <400": (r) => r.status >= 200 && r.status < 400 });
+
+      const doc = parseHTML(loginPage.body);
+      const csrf =
+        doc.find('input[name="_csrf"]').first().attr("value") ||
+        doc.find('meta[name="_csrf"]').first().attr("content") ||
+        "";
+
+      const form = formEncode({ user_name: USERNAME, password: PASSWORD, _csrf: csrf });
+
+      const submitParams = p("web_login_submit");
+      submitParams.headers["Content-Type"] = "application/x-www-form-urlencoded";
+
+      const resp = http.post(BASE_URL + "/user/login", form, submitParams);
+      check(resp, { "login resp <400": (r) => r.status >= 200 && r.status < 400 });
+
+      const home = http.get(BASE_URL + "/", p("web_home_after_login"));
+      loggedIn = check(home, { "not redirect to login": (r) => !(r.url && r.url.indexOf("/user/login") >= 0) });
+    }
+
+    // ----------------------------
+    // default(): Web browse behavior
+    // ----------------------------
+    export default function (data) {
+      ensureWebLogin();
+
+      // 1) Home page / explore home page
+      group("home", () => {
+        const r = http.get(BASE_URL + "/", p("web_home"));
+        check(r, { "home <400": (res) => res.status >= 200 && res.status < 400 });
+      });
+
+      group("explore_home", () => {
+        const r = http.get(BASE_URL + "/explore", p("web_explore"));
+        check(r, { "explore <400": (res) => res.status >= 200 && res.status < 400 });
+      });
+
+      // 2) explore repos/users/orgs (lightweight lists)
+      group("explore_repos", () => {
+        const pages = EXPLORE_PAGES > 0 ? EXPLORE_PAGES : 1;
+        for (let i = 1; i <= pages; i++) {
+          const r = http.get(BASE_URL + "/explore/repos?page=" + i, p("web_explore_repos_p" + i));
+          check(r, { "explore repos <400": (res) => res.status >= 200 && res.status < 400 });
+        }
+      });
+
+      group("explore_users", () => {
+        const r = http.get(BASE_URL + "/explore/users", p("web_explore_users"));
+        check(r, { "explore users <400": (res) => res.status >= 200 && res.status < 400 });
+      });
+
+      group("explore_orgs", () => {
+        const r = http.get(BASE_URL + "/explore/organizations", p("web_explore_orgs"));
+        check(r, { "explore orgs <400": (res) => res.status >= 200 && res.status < 400 });
+      });
+
+      // 3) Open a repository (sampled from the setup repo pool)
+      const repoItem = data && data.repos ? pick(data.repos) : null;
+      if (repoItem && repoItem.owner && repoItem.repo) {
+        const owner = repoItem.owner;
+        const repo = repoItem.repo;
+        const branchEsc = escapePath(repoItem.branch || "main");
+
+        if (ENABLE_REPO_HOME) {
+          group("repo_home", () => {
+            const r = http.get(BASE_URL + "/" + owner + "/" + repo, p("web_repo_home"));
+            check(r, { "repo home <400": (res) => res.status >= 200 && res.status < 400 });
+          });
+        }
+
+        if (ENABLE_ISSUES) {
+          group("repo_issues_list", () => {
+            const r = http.get(BASE_URL + "/" + owner + "/" + repo + "/issues", p("web_repo_issues"));
+            check(r, { "issues <400": (res) => res.status >= 200 && res.status < 400 });
+          });
+        }
+
+        if (ENABLE_PULLS) {
+          group("repo_pulls_list", () => {
+            const r = http.get(BASE_URL + "/" + owner + "/" + repo + "/pulls", p("web_repo_pulls"));
+            check(r, { "pulls <400": (res) => res.status >= 200 && res.status < 400 });
+          });
+        }
+
+        if (ENABLE_COMMITS) {
+          group("repo_commits", () => {
+            const r = http.get(BASE_URL + "/" + owner + "/" + repo + "/commits/branch/" + branchEsc, p("web_repo_commits"));
+            check(r, { "commits <400": (res) => res.status >= 200 && res.status < 400 });
+          });
+        }
+      } else {
+        // If there is no repo pool, keep the browse scenario runnable (explore only)
+        group("no_repo_pool", () => {
+          const r = http.get(BASE_URL + "/explore/repos", p("web_explore_repos_only"));
+          check(r, { "explore repos <400": (res) => res.status >= 200 && res.status < 400 });
+        });
+      }
+      sleep(THINK);
+    }

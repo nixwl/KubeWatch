@@ -1,0 +1,218 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-gitea-web-mix-scripts
+  namespace: traffic
+data:
+  web_mix.js: |
+    // web_mix.js - Gitea Web Mixed Workload Entry
+    //
+    // Convention:
+    // - The initContainer copies the four scenario scripts to:
+    //   /scripts/browse/  /scripts/review/  /scripts/issues/  /scripts/commit/
+    // - This entry script is copied to /scripts/web_mix.js
+    // - The main container runs: k6 run /scripts/web_mix.js
+    //
+    // Mixed strategy:
+    // - Use k6 multi-scenario to distribute TOTAL_VUS across the four scenarios by W_* weights
+    // - Identically named switches/parameters take effect globally in the mixed scenario (the Job injects only one shared env set)
+
+    import browse, { setup as setupBrowse } from "./browse/web_browse.js";
+    import review, { setup as setupReview } from "./review/web_review.js";
+    import issues, { setup as setupIssues } from "./issues/web_issues.js";
+    import commit, { setup as setupCommit } from "./commit/web_commit.js";
+
+    // ============================
+    // Helpers
+    // ============================
+    function toNum(v, def) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : def;
+    }
+
+    // Allocate integer VUs by weight, ensuring sum(vus) = totalVus
+    // - weight=0 => scenario disabled
+    // - When totalVus < the number of enabled scenarios: give 1 VU only to the top totalVus scenarios by weight
+    function buildWeightedVus(totalVus, weights) {
+      const keys = Object.keys(weights).filter((k) => weights[k] > 0);
+      if (totalVus <= 0 || keys.length === 0) return {};
+
+      // If totalVus is too small: sort by weight and give 1 to the top N scenarios
+      if (totalVus < keys.length) {
+        const sorted = [...keys].sort((a, b) => weights[b] - weights[a]);
+        const outSmall = {};
+        for (const k of sorted) outSmall[k] = 0;
+        for (let i = 0; i < totalVus; i++) outSmall[sorted[i]] = 1;
+        return outSmall;
+      }
+
+      const sum = keys.reduce((a, k) => a + weights[k], 0);
+      if (!sum) return {};
+
+      const out = {};
+      let used = 0;
+
+      // Initial allocation: round down
+      for (const k of keys) {
+        const vus = Math.floor((totalVus * weights[k]) / sum);
+        out[k] = vus;
+        used += vus;
+      }
+
+      // Allocate the remaining VUs to the highest-weighted scenarios
+      let left = totalVus - used;
+      const keysByWeight = [...keys].sort((a, b) => weights[b] - weights[a]);
+      let idx = 0;
+      while (left > 0) {
+        out[keysByWeight[idx % keysByWeight.length]] += 1;
+        left -= 1;
+        idx += 1;
+      }
+
+      // Ensure each enabled scenario has at least 1 VU (at this point totalVus >= the number of scenarios)
+      for (const k of keys) {
+        if (out[k] < 1) out[k] = 1;
+      }
+
+      // If the "at least 1" rule causes an overflow, subtract from the lowest-weighted scenarios until the total equals totalVus
+      let totalNow = keys.reduce((a, k) => a + (out[k] || 0), 0);
+      if (totalNow > totalVus) {
+        const keysByLowWeight = [...keys].sort((a, b) => weights[a] - weights[b]);
+        let over = totalNow - totalVus;
+        let j = 0;
+        while (over > 0 && j < keysByLowWeight.length) {
+          const k = keysByLowWeight[j];
+          if (out[k] > 1) {
+            out[k] -= 1;
+            over -= 1;
+          } else {
+            j += 1;
+          }
+        }
+      }
+
+      return out;
+    }
+
+    // ============================
+    // ENV (mix-level)
+    // ============================
+    const INSECURE_TLS = (__ENV.INSECURE_TLS === "true");
+    const DURATION = __ENV.DURATION || "10m";
+
+    // Total concurrency: prefer TOTAL_VUS; fall back to VUS if unset (compatible with single-scenario jobs)
+    const TOTAL_VUS = toNum(__ENV.TOTAL_VUS, toNum(__ENV.VUS, 10));
+
+    // Weights (default: 50/20/20/10)
+    const W_BROWSE = toNum(__ENV.W_BROWSE, 50);
+    const W_REVIEW = toNum(__ENV.W_REVIEW, 20);
+    const W_ISSUES = toNum(__ENV.W_ISSUES, 20);
+    const W_COMMIT = toNum(__ENV.W_COMMIT, 10);
+
+    // Global thresholds (one guardrail at the entry point; sub-scripts can also read the same env names)
+    const TH_FAIL_RATE_MAX = String(__ENV.TH_FAIL_RATE_MAX || "0.05");
+    const TH_P95_MS_MAX = String(__ENV.TH_P95_MS_MAX || "3000");
+    const TH_CHECKS_MIN = String(__ENV.TH_CHECKS_MIN || "0.95");
+
+    const weights = {
+      web_browse: W_BROWSE,
+      web_review: W_REVIEW,
+      web_issues: W_ISSUES,
+      web_commit: W_COMMIT,
+    };
+
+    const vusMap = buildWeightedVus(TOTAL_VUS, weights);
+
+    // Print allocation results at startup for easy verification
+    console.log(
+      "[mix] TOTAL_VUS=" + TOTAL_VUS +
+      " weights=" + JSON.stringify(weights) +
+      " vusMap=" + JSON.stringify(vusMap) +
+      " duration=" + DURATION
+    );
+
+    // ============================
+    // k6 options (multi-scenario)
+    // ============================
+    const scenarios = {};
+
+    if (vusMap.web_browse) {
+      scenarios.web_browse = {
+        executor: "constant-vus",
+        vus: vusMap.web_browse,
+        duration: DURATION,
+        exec: "web_browse",
+        gracefulStop: "10s",
+      };
+    }
+
+    if (vusMap.web_review) {
+      scenarios.web_review = {
+        executor: "constant-vus",
+        vus: vusMap.web_review,
+        duration: DURATION,
+        exec: "web_review",
+        gracefulStop: "10s",
+      };
+    }
+
+    if (vusMap.web_issues) {
+      scenarios.web_issues = {
+        executor: "constant-vus",
+        vus: vusMap.web_issues,
+        duration: DURATION,
+        exec: "web_issues",
+        gracefulStop: "10s",
+      };
+    }
+
+    if (vusMap.web_commit) {
+      scenarios.web_commit = {
+        executor: "constant-vus",
+        vus: vusMap.web_commit,
+        duration: DURATION,
+        exec: "web_commit",
+        gracefulStop: "10s",
+      };
+    }
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      scenarios: scenarios,
+      thresholds: {
+        http_req_failed: ["rate<" + TH_FAIL_RATE_MAX],
+        http_req_duration: ["p(95)<" + TH_P95_MS_MAX],
+        checks: ["rate>" + TH_CHECKS_MIN],
+      },
+    };
+
+    // ============================
+    // setup: reuse the setup() function from the four scripts (runs only once globally)
+    // ============================
+    export function setup() {
+      return {
+        browse: setupBrowse ? setupBrowse() : null,
+        review: setupReview ? setupReview() : null,
+        issues: setupIssues ? setupIssues() : null,
+        commit: setupCommit ? setupCommit() : null,
+      };
+    }
+
+    // ============================
+    // scenario exec functions
+    // ============================
+    export function web_browse(data) {
+      return browse(data && data.browse);
+    }
+
+    export function web_review(data) {
+      return review(data && data.review);
+    }
+
+    export function web_issues(data) {
+      return issues(data && data.issues);
+    }
+
+    export function web_commit(data) {
+      return commit(data && data.commit);
+    }

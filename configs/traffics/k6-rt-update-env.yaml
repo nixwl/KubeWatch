@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-update-env
+  namespace: traffic
+data:
+  BASE_URL: "https://rt.example.com" # If there is a WebPath prefix: https://rt.example.com/rt
+  INSECURE_TLS: "true"
+  RT_QUEUE: "Traffic"
+
+  # k6 runtime shape
+  VUS: "6"
+  DURATION: "5m"
+  SLEEP_MIN: "0.1"
+  SLEEP_MAX: "0.6"
+
+  # staff user-pool selection strategy
+  STAFF_PICK_MODE: "roundrobin" # roundrobin | random
+  EXCLUDE_NAMES: "root" # Comma-separated; root is excluded by default
+
+  # Pagination
+  PER_PAGE: "20"
+
+  # Default sorting (used when the template does not specify ORDER BY)
+  DEFAULT_ORDERBY: "LastUpdated"
+  DEFAULT_ORDER: "DESC"
+
+  # Pick tickets from the list: random | first
+  PICK_TICKET_MODE: "random"
+
+  # Pre-read (GET before PUT)
+  PRE_READ: "true"
+
+  # Read after write
+  VERIFY_AFTER_PUT: "true"
+  GET_AFTER_RATIO: "1.00"
+  HISTORY_RATIO: "0.50"
+
+  # ========= Update action ratios (0~1; they do not need to sum exactly to 1) =========
+  OWNER_RATIO: "0.20"
+  PRIORITY_RATIO: "0.30"
+  SUBJECT_RATIO: "0.50"
+
+  # Owner assignment strategy
+  OWNER_TARGET_MODE: "self" # self | roundrobin | random
+  OWNER_ONLY_IF_UNOWNED: "true"
+  OWNER_UNOWNED_VALUES: "Nobody,0,1" # Compatible with string/number
+
+  # Priority range (RT commonly uses 0~99)
+  PRIORITY_MIN: "0"
+  PRIORITY_MAX: "99"
+
+  # Subject update marker (the script truncates to avoid unbounded growth)
+  SUBJECT_PATCH_TAG: "upd"
+
+  # TicketSQL for selecting tickets (prefer the intake pool to avoid polluting non-test tickets)
+  TICKETSQL_TEMPLATES: |-
+    [
+      "Queue='Traffic' AND Subject LIKE 'k6-intake%' AND Status!='deleted' ORDER BY LastUpdated DESC",
+      "Queue='Traffic' AND Subject LIKE 'k6-%' AND Status!='deleted' ORDER BY LastUpdated DESC"
+    ]
+
+  # =========================
+  # Thresholds (tunable)
+  # =========================
+  TH_ENABLE: "true"
+  TH_FAIL_RATE_MAX: "0.01"
+  TH_P95_MS_MAX: "4500"
+
+  # Per-op thresholds (0 = disabled)
+  TH_SEARCH_P95_MS: "0" # tickets_search
+  TH_GET_P95_MS: "0" # ticket_get
+  TH_PUT_SUBJECT_P95_MS: "0" # ticket_put_subject
+  TH_PUT_PRIORITY_P95_MS: "0" # ticket_put_priority
+  TH_PUT_OWNER_P95_MS: "0" # ticket_put_owner
+  TH_HIST_P95_MS: "0" # ticket_history

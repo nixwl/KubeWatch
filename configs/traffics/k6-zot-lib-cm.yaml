@@ -1,0 +1,169 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-zot-lib
+  namespace: traffic
+data:
+  lib.js: |
+    import http from "k6/http";
+    import { check, sleep } from "k6";
+    import encoding from "k6/encoding";
+
+    export const DEFAULT_REPOS = [
+      "mirror/docker.io/curlimages/curl",
+      "mirror/docker.io/library/alpine",
+      "mirror/docker.io/library/busybox",
+      "mirror/docker.io/library/debian",
+      "mirror/docker.io/library/httpd",
+      "mirror/docker.io/library/nginx",
+      "mirror/docker.io/library/redis",
+      "mirror/docker.io/library/registry",
+      "mirror/ghcr.io/grafana/k6",
+      "mirror/ghcr.io/nicolaka/netshoot",
+    ];
+
+    export const ACCEPT_MANIFEST =
+      "application/vnd.oci.image.manifest.v1+json," +
+      "application/vnd.oci.image.index.v1+json," +
+      "application/vnd.docker.distribution.manifest.v2+json," +
+      "application/vnd.docker.distribution.manifest.list.v2+json";
+
+    export function envStr(k, defVal) {
+      const v = __ENV[k];
+      return (v === undefined || v === null || v === "") ? defVal : String(v);
+    }
+    export function envNum(k, defVal) {
+      const v = __ENV[k];
+      if (v === undefined || v === null || v === "") return defVal;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : defVal;
+    }
+    export function envBool(k, defVal) {
+      const v = __ENV[k];
+      if (v === undefined || v === null || v === "") return defVal;
+      return String(v).toLowerCase() === "true";
+    }
+
+    export function baseUrl() {
+      return envStr("BASE_URL", "https://zot.example.com").replace(/\/+$/, "");
+    }
+
+    export function authHeaders(extra = {}) {
+      const user = envStr("ZOT_USER", "admin");
+      const pass = envStr("ZOT_PASS", "admin");
+      const token = encoding.b64encode(`${user}:${pass}`);
+      return {
+        Authorization: `Basic ${token}`,
+        "User-Agent": "k6-zot/1.0",
+        ...extra,
+      };
+    }
+
+    export function think() {
+      const min = envNum("THINK_MIN", 0.05);
+      const max = envNum("THINK_MAX", 0.3);
+      const s = min + Math.random() * (max - min);
+      sleep(s);
+    }
+
+    export function pick(arr) {
+      return arr[Math.floor(Math.random() * arr.length)];
+    }
+
+    export function randInt(min, max) {
+      const lo = Math.min(min, max);
+      const hi = Math.max(min, max);
+      return lo + Math.floor(Math.random() * (hi - lo + 1));
+    }
+
+    export function v2Ping() {
+      const url = `${baseUrl()}/v2/`;
+      const r = http.get(url, {
+        headers: authHeaders({}),
+        responseType: "none",
+        tags: { op: "v2_ping" },
+        timeout: "30s",
+      });
+      // A registry may return 401 (unauthenticated) and still count as alive
+      check(r, { "v2 ping ok": (res) => res.status === 200 || res.status === 401 });
+      return r;
+    }
+
+    export function catalogOnce() {
+      const n = envNum("MAX_CATALOG_N", 1000);
+      const url = `${baseUrl()}/v2/_catalog?n=${n}`;
+      const r = http.get(url, {
+        headers: authHeaders({ Accept: "application/json" }),
+        responseType: "text",
+        tags: { op: "catalog" },
+        timeout: "60s",
+      });
+      // Some registries disable _catalog (404); that's allowed and will be reflected in the check
+      check(r, { "catalog ok(200/404)": (res) => res.status === 200 || res.status === 404 });
+      return r;
+    }
+
+    export function tagsListOnce(repo) {
+      const n = envNum("TAGS_LIST_N", 200);
+      const url = `${baseUrl()}/v2/${repo}/tags/list?n=${n}`;
+      const r = http.get(url, {
+        headers: authHeaders({ Accept: "application/json" }),
+        responseType: "text",
+        tags: { op: "tags_list", repo },
+        timeout: "60s",
+      });
+      check(r, { "tags/list status ok": (res) => [200, 401, 403, 404].includes(res.status) });
+      if (r.status !== 200) return null;
+
+      try {
+        const j = JSON.parse(r.body);
+        if (Array.isArray(j.tags) && j.tags.length > 0) return j.tags;
+      } catch (_) {}
+      return null;
+    }
+
+    export function loadReposFromEnvOrDefault() {
+      // Optional: REPOS_JSON='["repo1","repo2"]' or REPOS_CSV='repo1,repo2'
+      const rj = envStr("REPOS_JSON", "");
+      if (rj) {
+        try {
+          const arr = JSON.parse(rj);
+          if (Array.isArray(arr) && arr.length > 0) return arr;
+        } catch (_) {}
+      }
+      const rc = envStr("REPOS_CSV", "");
+      if (rc) {
+        const arr = rc.split(",").map(s => s.trim()).filter(Boolean);
+        if (arr.length > 0) return arr;
+      }
+      return DEFAULT_REPOS;
+    }
+
+    export function batchBlobs(repo, digests) {
+      const par = envNum("BLOB_PARALLELISM", 2);
+      const getPct = envNum("BLOB_GET_PCT", 80);
+
+      for (let i = 0; i < digests.length; i += par) {
+        const slice = digests.slice(i, i + par);
+        const reqs = slice.map((dgst) => {
+          const url = `${baseUrl()}/v2/${repo}/blobs/${dgst}`;
+          const method = (Math.random() * 100 < getPct) ? "GET" : "HEAD";
+          return {
+            method,
+            url,
+            body: null,
+            params: {
+              headers: authHeaders({}),
+              tags: { op: method === "GET" ? "blob_get" : "blob_head", repo },
+              timeout: "120s",
+            },
+          };
+        });
+
+        const resps = http.batch(reqs);
+        for (const r of resps) {
+          check(r, { "blob ok(200/307)": (res) => [200, 307].includes(res.status) });
+        }
+        think();
+      }
+    }

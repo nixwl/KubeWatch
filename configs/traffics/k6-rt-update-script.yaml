@@ -1,0 +1,333 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-update-script
+  namespace: traffic
+data:
+  update.js: |-
+    import http from "k6/http";
+    import { check, fail, sleep } from "k6";
+    import { SharedArray } from "k6/data";
+
+    const BASE_URL = __ENV.BASE_URL;
+    const INSECURE_TLS = (__ENV.INSECURE_TLS || "true").toLowerCase() === "true";
+    const RT_QUEUE = (__ENV.RT_QUEUE || "Traffic").trim();
+
+    const VUS = parseInt(__ENV.VUS || "6", 10);
+    const DURATION = __ENV.DURATION || "5m";
+    const SLEEP_MIN = parseFloat(__ENV.SLEEP_MIN || "0.1");
+    const SLEEP_MAX = parseFloat(__ENV.SLEEP_MAX || "0.6");
+
+    const STAFF_PICK_MODE = (__ENV.STAFF_PICK_MODE || "roundrobin").toLowerCase();
+    const EXCLUDE_NAMES = (__ENV.EXCLUDE_NAMES || "").split(",").map(s => s.trim()).filter(Boolean);
+
+    const PER_PAGE = parseInt(__ENV.PER_PAGE || "20", 10);
+    const DEFAULT_ORDERBY = (__ENV.DEFAULT_ORDERBY || "LastUpdated").trim();
+    const DEFAULT_ORDER = (__ENV.DEFAULT_ORDER || "DESC").trim().toUpperCase();
+    const PICK_TICKET_MODE = (__ENV.PICK_TICKET_MODE || "random").toLowerCase();
+
+    const PRE_READ = (__ENV.PRE_READ || "true").toLowerCase() === "true";
+
+    const VERIFY_AFTER_PUT = (__ENV.VERIFY_AFTER_PUT || "true").toLowerCase() === "true";
+    const GET_AFTER_RATIO = parseFloat(__ENV.GET_AFTER_RATIO || "1.0");
+    const HISTORY_RATIO = parseFloat(__ENV.HISTORY_RATIO || "0.5");
+
+    const OWNER_RATIO = parseFloat(__ENV.OWNER_RATIO || "0.2");
+    const PRIORITY_RATIO = parseFloat(__ENV.PRIORITY_RATIO || "0.3");
+    const SUBJECT_RATIO = parseFloat(__ENV.SUBJECT_RATIO || "0.5");
+
+    const OWNER_TARGET_MODE = (__ENV.OWNER_TARGET_MODE || "self").toLowerCase();
+    const OWNER_ONLY_IF_UNOWNED = (__ENV.OWNER_ONLY_IF_UNOWNED || "true").toLowerCase() === "true";
+    const OWNER_UNOWNED_VALUES = (__ENV.OWNER_UNOWNED_VALUES || "Nobody,0,1")
+      .split(",").map(s => s.trim()).filter(Boolean);
+
+    const PRIORITY_MIN = parseInt(__ENV.PRIORITY_MIN || "0", 10);
+    const PRIORITY_MAX = parseInt(__ENV.PRIORITY_MAX || "99", 10);
+
+    const SUBJECT_PATCH_TAG = (__ENV.SUBJECT_PATCH_TAG || "upd").trim();
+
+    const TICKETSQL_TEMPLATES = (() => {
+      try { return JSON.parse(__ENV.TICKETSQL_TEMPLATES || "[]"); }
+      catch (_) { return []; }
+    })();
+
+    // ===== thresholds from env =====
+    function envBool(k, defVal) {
+      const v = (__ENV[k] ?? String(defVal)).toString().toLowerCase();
+      return v === "true" || v === "1" || v === "yes" || v === "y";
+    }
+    function envFloat(k, defVal) {
+      const v = parseFloat(__ENV[k]);
+      return Number.isFinite(v) ? v : defVal;
+    }
+    function envInt(k, defVal) {
+      const v = parseInt(__ENV[k], 10);
+      return Number.isFinite(v) ? v : defVal;
+    }
+
+    const TH_ENABLE = envBool("TH_ENABLE", true);
+    const TH_FAIL_RATE_MAX = envFloat("TH_FAIL_RATE_MAX", 0.01);
+    const TH_P95_MS_MAX = envInt("TH_P95_MS_MAX", 4500);
+
+    const TH_SEARCH_P95_MS = envInt("TH_SEARCH_P95_MS", 0);
+    const TH_GET_P95_MS = envInt("TH_GET_P95_MS", 0);
+    const TH_PUT_SUBJECT_P95_MS = envInt("TH_PUT_SUBJECT_P95_MS", 0);
+    const TH_PUT_PRIORITY_P95_MS = envInt("TH_PUT_PRIORITY_P95_MS", 0);
+    const TH_PUT_OWNER_P95_MS = envInt("TH_PUT_OWNER_P95_MS", 0);
+    const TH_HIST_P95_MS = envInt("TH_HIST_P95_MS", 0);
+
+    function buildThresholds() {
+      if (!TH_ENABLE) return {};
+      const t = {
+        http_req_failed:   [`rate<${TH_FAIL_RATE_MAX}`],
+        http_req_duration: [`p(95)<${TH_P95_MS_MAX}`],
+      };
+      if (TH_SEARCH_P95_MS > 0) t[`http_req_duration{op:tickets_search}`] = [`p(95)<${TH_SEARCH_P95_MS}`];
+      if (TH_GET_P95_MS > 0)    t[`http_req_duration{op:ticket_get}`]     = [`p(95)<${TH_GET_P95_MS}`];
+      if (TH_PUT_SUBJECT_P95_MS > 0)  t[`http_req_duration{op:ticket_put_subject}`]  = [`p(95)<${TH_PUT_SUBJECT_P95_MS}`];
+      if (TH_PUT_PRIORITY_P95_MS > 0) t[`http_req_duration{op:ticket_put_priority}`] = [`p(95)<${TH_PUT_PRIORITY_P95_MS}`];
+      if (TH_PUT_OWNER_P95_MS > 0)    t[`http_req_duration{op:ticket_put_owner}`]    = [`p(95)<${TH_PUT_OWNER_P95_MS}`];
+      if (TH_HIST_P95_MS > 0)   t[`http_req_duration{op:ticket_history}`] = [`p(95)<${TH_HIST_P95_MS}`];
+      return t;
+    }
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      vus: VUS,
+      duration: DURATION,
+      thresholds: buildThresholds(),
+    };
+
+    const USERS = new SharedArray("users", () => [JSON.parse(open("./data/users.json"))])[0];
+
+    function hdr(token, tags) {
+      return {
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `token ${token}`,
+        },
+        tags: tags || {},
+      };
+    }
+
+    function must(res, name) {
+      const ok = check(res, { [`${name} status`]: (r) => r.status >= 200 && r.status < 400 });
+      if (!ok) fail(`${name} failed: status=${res.status} body=${(res.body || "").slice(0, 400)}`);
+    }
+
+    function j(res) { try { return res.json(); } catch (_) { return null; } }
+
+    function randBetween(a, b) { return a + Math.random() * (b - a); }
+
+    function filteredStaffs() {
+      const arr = (USERS.staffs || []).filter(u => u && u.name && u.token);
+      if (!arr.length) fail("empty staffs pool in users.json");
+
+      if (!EXCLUDE_NAMES.length) return arr;
+
+      const ex = new Set(EXCLUDE_NAMES);
+      const out = arr.filter(u => !ex.has(u.name));
+      if (!out.length) fail(`all staffs excluded by EXCLUDE_NAMES=${EXCLUDE_NAMES.join(",")}`);
+      return out;
+    }
+
+    function pickStaff() {
+      const arr = filteredStaffs();
+      if (STAFF_PICK_MODE === "random") return arr[Math.floor(Math.random() * arr.length)];
+      return arr[(__VU - 1) % arr.length];
+    }
+
+    function pickOwnerTarget(selfStaff) {
+      const arr = filteredStaffs();
+      if (OWNER_TARGET_MODE === "self") return selfStaff;
+      if (OWNER_TARGET_MODE === "random") return arr[Math.floor(Math.random() * arr.length)];
+      // roundrobin
+      return arr[(__ITER) % arr.length];
+    }
+
+    function extractTicketIds(items) {
+      const ids = [];
+      for (const it of (items || [])) {
+        if (it && typeof it.id === "number") { ids.push(it.id); continue; }
+        const u = it && it._url ? String(it._url) : "";
+        const m = u.match(/\/ticket\/(\d+)\b/);
+        if (m) ids.push(parseInt(m[1], 10));
+      }
+      return ids;
+    }
+
+    function pickOne(ids) {
+      if (!ids || !ids.length) return null;
+      if (PICK_TICKET_MODE === "first") return ids[0];
+      return ids[Math.floor(Math.random() * ids.length)];
+    }
+
+    function splitQueryAndOrder(tpl) {
+      const raw = String(tpl || "").trim().replace(/\{\{QUEUE\}\}/g, RT_QUEUE);
+      const re = /\s+ORDER\s+BY\s+([A-Za-z_][\w.]*)\s+(ASC|DESC)\s*$/i;
+      const m = raw.match(re);
+      if (m) {
+        const idx = raw.toUpperCase().lastIndexOf("ORDER BY");
+        return { query: raw.slice(0, idx).trim(), orderby: m[1], order: m[2].toUpperCase() };
+      }
+      return { query: raw, orderby: DEFAULT_ORDERBY, order: DEFAULT_ORDER };
+    }
+
+    function getField(obj, keys) {
+      if (!obj || typeof obj !== "object") return null;
+      for (const k of keys) {
+        if (obj[k] !== undefined && obj[k] !== null) return obj[k];
+      }
+      return null;
+    }
+
+    function normalizeOwner(v) {
+      if (v === null || v === undefined) return "";
+      if (typeof v === "number") return String(v);
+      if (typeof v === "string") return v.trim();
+      const n = getField(v, ["name", "Name"]);
+      if (n) return String(n).trim();
+      const id = getField(v, ["id", "Id"]);
+      if (id !== null && id !== undefined) return String(id);
+      return String(v);
+    }
+
+    function isUnowned(ownerVal) {
+      const ov = normalizeOwner(ownerVal);
+      if (!ov) return true;
+      for (const x of OWNER_UNOWNED_VALUES) if (ov === x) return true;
+      return false;
+    }
+
+    function clampInt(x, a, b) {
+      return Math.max(a, Math.min(b, x));
+    }
+
+    function pickPriority(oldVal) {
+      const oldNum = parseInt(String(oldVal ?? ""), 10);
+      if (Number.isFinite(oldNum)) {
+        const delta = Math.floor((Math.random() * 21) - 10); // [-10,+10]
+        return clampInt(oldNum + delta, PRIORITY_MIN, PRIORITY_MAX);
+      }
+      return clampInt(
+        Math.floor(Math.random() * (PRIORITY_MAX - PRIORITY_MIN + 1)) + PRIORITY_MIN,
+        PRIORITY_MIN, PRIORITY_MAX
+      );
+    }
+
+    function patchSubject(oldSubject, staffName) {
+      const base = String(oldSubject || "").trim();
+      const suffix = ` | ${SUBJECT_PATCH_TAG}=${staffName}:${Date.now().toString(36)}`;
+      return (base + suffix).slice(0, 180);
+    }
+
+    function chooseAction() {
+      const sum = OWNER_RATIO + PRIORITY_RATIO + SUBJECT_RATIO;
+      const r = Math.random();
+
+      if (sum > 1.000001) {
+        const o = OWNER_RATIO / sum;
+        const p = PRIORITY_RATIO / sum;
+        if (r < o) return "owner";
+        if (r < o + p) return "priority";
+        return "subject";
+      }
+
+      if (r < OWNER_RATIO) return "owner";
+      if (r < OWNER_RATIO + PRIORITY_RATIO) return "priority";
+      if (r < OWNER_RATIO + PRIORITY_RATIO + SUBJECT_RATIO) return "subject";
+      return "subject";
+    }
+
+    export default function () {
+      if (!BASE_URL) fail("BASE_URL is required");
+      if (!TICKETSQL_TEMPLATES || TICKETSQL_TEMPLATES.length === 0) {
+        fail("TICKETSQL_TEMPLATES must be a non-empty JSON array string in env ConfigMap");
+      }
+
+      const staff = pickStaff();
+
+      // 1) Search the ticket pool
+      const tpl = TICKETSQL_TEMPLATES[Math.floor(Math.random() * TICKETSQL_TEMPLATES.length)];
+      const qinfo = splitQueryAndOrder(tpl);
+
+      const r1 = http.get(
+        `${BASE_URL}/REST/2.0/tickets?query=${encodeURIComponent(qinfo.query)}&orderby=${encodeURIComponent(qinfo.orderby)}&order=${encodeURIComponent(qinfo.order)}&per_page=${PER_PAGE}`,
+        hdr(staff.token, { scenario: "update", role: "staff", op: "tickets_search", queue: RT_QUEUE })
+      );
+      must(r1, "GET /tickets?query");
+
+      const s = j(r1);
+      const ids = extractTicketIds(s && s.items);
+      const id = pickOne(ids);
+      if (!id) {
+        sleep(randBetween(SLEEP_MIN, SLEEP_MAX));
+        return;
+      }
+
+      // 2) Pre-read
+      let ticket = {};
+      if (PRE_READ) {
+        const rGet = http.get(
+          `${BASE_URL}/REST/2.0/ticket/${id}`,
+          hdr(staff.token, { scenario: "update", role: "staff", op: "ticket_get", queue: RT_QUEUE })
+        );
+        must(rGet, "GET /ticket/:id (pre)");
+        ticket = j(rGet) || {};
+      }
+
+      // 3) Choose the update action
+      const action = chooseAction();
+
+      let body = null;
+      let op = "ticket_put_subject";
+
+      if (action === "priority") {
+        const oldPr = getField(ticket, ["Priority", "priority"]);
+        body = { Priority: pickPriority(oldPr) };
+        op = "ticket_put_priority";
+      } else if (action === "owner") {
+        const curOwner = getField(ticket, ["Owner", "owner"]);
+        if (OWNER_ONLY_IF_UNOWNED && !isUnowned(curOwner)) {
+          sleep(randBetween(SLEEP_MIN, SLEEP_MAX));
+          return;
+        }
+        const target = pickOwnerTarget(staff);
+        // RT commonly accepts usernames; if your environment requires a numeric OwnerId, change this to target.id (you will need to provide the mapping)
+        body = { Owner: target.name };
+        op = "ticket_put_owner";
+      } else {
+        const oldSub = getField(ticket, ["Subject", "subject"]) || "";
+        body = { Subject: patchSubject(oldSub, staff.name) };
+        op = "ticket_put_subject";
+      }
+
+      // 4) PUT update
+      const rPut = http.put(
+        `${BASE_URL}/REST/2.0/ticket/${id}`,
+        JSON.stringify(body),
+        hdr(staff.token, { scenario: "update", role: "staff", op, queue: RT_QUEUE })
+      );
+      must(rPut, `PUT ${op}`);
+
+      // 5) Verify after write
+      if (VERIFY_AFTER_PUT) {
+        if (Math.random() < GET_AFTER_RATIO) {
+          const rGet2 = http.get(
+            `${BASE_URL}/REST/2.0/ticket/${id}`,
+            hdr(staff.token, { scenario: "update", role: "staff", op: "ticket_get", queue: RT_QUEUE })
+          );
+          must(rGet2, "GET /ticket/:id (post)");
+        }
+        if (Math.random() < HISTORY_RATIO) {
+          const rHist = http.get(
+            `${BASE_URL}/REST/2.0/ticket/${id}/history`,
+            hdr(staff.token, { scenario: "update", role: "staff", op: "ticket_history", queue: RT_QUEUE })
+          );
+          must(rHist, "GET /ticket/:id/history (post)");
+        }
+      }
+
+      sleep(randBetween(SLEEP_MIN, SLEEP_MAX));
+    }

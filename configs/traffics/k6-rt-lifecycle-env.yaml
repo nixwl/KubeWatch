@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-lifecycle-env
+  namespace: traffic
+data:
+  BASE_URL: "https://rt.example.com"
+  INSECURE_TLS: "true"
+  RT_QUEUE: "Traffic"
+
+  # k6 runtime shape
+  VUS: "6"
+  DURATION: "5m"
+  SLEEP_MIN: "0.1"
+  SLEEP_MAX: "0.6"
+
+  # staff user-pool selection strategy
+  STAFF_PICK_MODE: "roundrobin" # roundrobin | random
+
+  # Pagination
+  PER_PAGE: "20"
+
+  # Default sorting (used when the template does not specify ORDER BY)
+  DEFAULT_ORDERBY: "LastUpdated"
+  DEFAULT_ORDER: "DESC"
+
+  # Pick tickets from the list: random | first
+  PICK_TICKET_MODE: "random"
+
+  # Read before write: GET the ticket to fetch the current Status before PUT (strongly recommended)
+  PRE_READ: "true"
+
+  # Read after write: GET ticket/history after PUT
+  VERIFY_AFTER_PUT: "true"
+  GET_AFTER_RATIO: "1.00" # When verify is enabled, ratio of GET ticket requests
+  HISTORY_RATIO: "0.70" # When verify is enabled, ratio of GET history requests
+
+  # TicketSQL for selecting tickets (prefer the intake pool to avoid touching non-test tickets)
+  TICKETSQL_TEMPLATES: |-
+    [
+      "Queue='Traffic' AND Subject LIKE 'k6-intake%' AND Status!='deleted' ORDER BY LastUpdated DESC",
+      "Queue='Traffic' AND Subject LIKE 'k6-%' AND Status!='deleted' ORDER BY LastUpdated DESC"
+    ]
+
+  # =========================
+  # Lifecycle transition strategy
+  # =========================
+  MODE: "cycle" # cycle | pair
+
+  # cycle mode: loop in sequence
+  STATUS_CYCLE: |-
+    ["new","open","stalled","resolved","open"]
+
+  # pair mode: valid from->to rules (closer to real usage, but depends on your actual lifecycle)
+  STATUS_RULES: |-
+    [
+      {"from":"new","to":"open"},
+      {"from":"open","to":"stalled"},
+      {"from":"stalled","to":"open"},
+      {"from":"stalled","to":"resolved"},
+      {"from":"open","to":"resolved"},
+      {"from":"resolved","to":"open"}
+    ]
+
+  # If the current Status is not in any rule/sequence: how to handle it
+  # skip: skip this iteration; force: force FALLBACK_STATUS
+  ON_UNKNOWN_STATUS: "skip" # skip | force
+  FALLBACK_STATUS: "open"
+
+  # =========================
+  # Thresholds (tunable)
+  # =========================
+  TH_ENABLE: "true"
+  TH_FAIL_RATE_MAX: "0.01"
+  TH_P95_MS_MAX: "4500"
+
+  # Per-op thresholds (0 = disabled)
+  TH_SEARCH_P95_MS: "0" # tickets_search
+  TH_GET_P95_MS: "0" # ticket_get
+  TH_PUT_P95_MS: "0" # ticket_put_status
+  TH_HIST_P95_MS: "0" # ticket_history

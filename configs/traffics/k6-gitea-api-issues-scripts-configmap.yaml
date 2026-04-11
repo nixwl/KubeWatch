@@ -1,0 +1,218 @@
+# =========================================================
+# k6 - Gitea API Issues (read + write enabled)
+# ConfigMap: k6-gitea-api-issues
+# Script: api_issues.js
+# Namespace: traffic
+# =========================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-gitea-api-issues-script
+  namespace: traffic
+data:
+  api_issues.js: |
+    import http from "k6/http";
+    import { check, sleep, fail } from "k6";
+
+    /**
+     * ===========================
+     * Gitea API - Issues Read / Write
+     * Read:
+     *  - issues list / detail / comments
+     *  - create issue -> comment -> (optional) close
+     * Clean:
+     *  - default CLEANUP=true, closing issue affter Write
+     *  - TITLE_PREFIX  union prefix for inentidy and audit
+     * ===========================
+     */
+
+    // ========= ENV Basic =========
+    const BASE_URL = (__ENV.BASE_URL || "https://gitea.example.com").replace(/\/+$/, "");
+    const INSECURE_TLS = (__ENV.INSECURE_TLS === "true");
+    const TOKEN = (__ENV.GITEA_TOKEN || "").trim();
+    const OWNER = (__ENV.OWNER || "").trim();
+    const REPO = (__ENV.REPO || "").trim();
+    const THINK = Number(__ENV.SLEEP_SECONDS || 1);
+
+    // ========= ENV Load =========
+    const VUS = Number(__ENV.VUS || 1);
+    const DURATION = __ENV.DURATION || "30s";
+
+    // ========= ENV Page / Switch =========
+    const PAGES = Number(__ENV.PAGES || 2);
+    const PER_PAGE = Number(__ENV.PER_PAGE || 20);
+    const ENABLE_DETAIL = (__ENV.ENABLE_DETAIL || "true") === "true";
+
+    // ========= Write Control (enabled) =========
+    const WRITE_RATIO = Number(__ENV.WRITE_RATIO || 0.05); // 0~1
+    const CLEANUP = (__ENV.CLEANUP || "true") === "true";
+    const TITLE_PREFIX = (__ENV.TITLE_PREFIX || "[k6]").trim();
+
+    // ========= ENV Threshold =========
+    const THRESH_FAIL_RATE = Number(__ENV.TH_FAIL_RATE_MAX || __ENV.THRESH_FAIL_RATE || 0.01);
+    const THRESH_P95_MS =  Number(__ENV.TH_P95_MS_MAX || __ENV.THRESH_P95_MS || 1200);
+    const THRESH_CHECK_RATE = Number(__ENV.TH_CHECKS_MIN || __ENV.THRESH_CHECK_RATE || 0.99);
+
+    export const options = {
+      vus: VUS,
+      duration: DURATION,
+      insecureSkipTLSVerify: INSECURE_TLS,
+      thresholds: {
+        http_req_failed: [`rate<${THRESH_FAIL_RATE}`],
+        http_req_duration: [`p(95)<${THRESH_P95_MS}`],
+        checks: [`rate>${THRESH_CHECK_RATE}`],
+      },
+    };
+
+    function must(cond, msg) {
+      if (!cond) fail(msg);
+    }
+
+    function headers() {
+      return {
+        headers: {
+          Authorization: `token ${TOKEN}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "User-Agent": "k6-gitea-api-issues",
+        },
+      };
+    }
+
+    function url(path) {
+      return `${BASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
+    }
+
+    function okStatus(res, allowed, name) {
+      return check(res, {
+        [name + ": status ok"]: (r) => allowed.indexOf(r.status) !== -1,
+      });
+    }
+
+    export function setup() {
+      must(TOKEN.length > 0, "ENV GITEA_TOKEN is required");
+      must(OWNER.length > 0, "ENV OWNER is required");
+      must(REPO.length > 0, "ENV REPO is required");
+      must(WRITE_RATIO >= 0 && WRITE_RATIO <= 1, "ENV WRITE_RATIO must be in [0,1]");
+      return {};
+    }
+
+    function pickIssueIndex(listJson) {
+      if (!listJson || !Array.isArray(listJson) || listJson.length === 0) return -1;
+      return Number(listJson[0].number || listJson[0].index || -1);
+    }
+
+    function createIssue(owner, repo) {
+      const now = new Date().toISOString();
+      const title = `${TITLE_PREFIX} issue ${__VU}-${__ITER} ${now}`;
+      const body = `loadtest issue created by k6\nvu=${__VU} iter=${__ITER} time=${now}`;
+
+      const params = headers();
+      params.tags = { name: "api_issues_create" };
+
+      const res = http.post(
+        url(`/api/v1/repos/${owner}/${repo}/issues`),
+        JSON.stringify({ title: title, body: body }),
+        params
+      );
+
+      const ok = okStatus(res, [200, 201], "POST create issue");
+      if (!ok) return -1;
+
+      try {
+        const j = res.json();
+        return Number(j.number || j.index || -1);
+      } catch (e) {
+        return -1;
+      }
+    }
+
+    function commentIssue(owner, repo, index) {
+      const now = new Date().toISOString();
+      const body = `loadtest comment by k6\nvu=${__VU} iter=${__ITER} time=${now}`;
+
+      const params = headers();
+      params.tags = { name: "api_issues_comment" };
+
+      const res = http.post(
+        url(`/api/v1/repos/${owner}/${repo}/issues/${index}/comments`),
+        JSON.stringify({ body: body }),
+        params
+      );
+      okStatus(res, [200, 201], "POST issue comment");
+    }
+
+    function closeIssue(owner, repo, index) {
+      const params = headers();
+      params.tags = { name: "api_issues_close" };
+
+      const res = http.patch(
+        url(`/api/v1/repos/${owner}/${repo}/issues/${index}`),
+        JSON.stringify({ state: "closed" }),
+        params
+      );
+      okStatus(res, [200, 201], "PATCH close issue");
+    }
+
+    export default function () {
+      const owner = encodeURIComponent(OWNER);
+      const repo = encodeURIComponent(REPO);
+
+      // 1) Issues list
+      let firstIndex = -1;
+      for (let p = 1; p <= PAGES; p++) {
+        const params = headers();
+        params.tags = { name: "api_issues_list" };
+
+        const res = http.get(
+          url(`/api/v1/repos/${owner}/${repo}/issues?state=open&page=${p}&limit=${PER_PAGE}`),
+          params
+        );
+        okStatus(res, [200], "GET issues list");
+
+        if (p === 1) {
+          try { firstIndex = pickIssueIndex(res.json()); } catch (e) { firstIndex = -1; }
+        }
+        sleep(THINK);
+      }
+
+      // 2) Issue detail/comments
+      if (ENABLE_DETAIL && firstIndex > 0) {
+        {
+          const params = headers();
+          params.tags = { name: "api_issues_detail" };
+          const res = http.get(
+            url(`/api/v1/repos/${owner}/${repo}/issues/${firstIndex}`),
+            params
+          );
+          okStatus(res, [200], "GET issue detail");
+          sleep(THINK);
+        }
+        {
+          const params = headers();
+          params.tags = { name: "api_issues_comments_list" };
+          const res = http.get(
+            url(`/api/v1/repos/${owner}/${repo}/issues/${firstIndex}/comments?page=1&limit=${PER_PAGE}`),
+            params
+          );
+          okStatus(res, [200], "GET issue comments");
+          sleep(THINK);
+        }
+      }
+
+      // 3) Write path
+      if (Math.random() < WRITE_RATIO) {
+        const idx = createIssue(owner, repo);
+        sleep(THINK);
+
+        if (idx > 0) {
+          commentIssue(owner, repo, idx);
+          sleep(THINK);
+
+          if (CLEANUP) {
+            closeIssue(owner, repo, idx);
+            sleep(THINK);
+          }
+        }
+      }
+    }

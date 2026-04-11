@@ -1,0 +1,246 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: k6-gitea-api-mixed-cron
+  namespace: traffic
+spec:
+  schedule: "0 * * * *" # Run once every hour
+  concurrencyPolicy: Forbid # Do not start the next run until the previous one finishes
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 4200 # 55m runtime + buffer
+      ttlSecondsAfterFinished: 3600
+      template:
+        spec:
+          restartPolicy: Never
+          initContainers:
+            - name: assemble-scripts
+              image: rancher/mirrored-library-busybox:1.36.1
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -e
+                  mkdir -p /scripts/auth /scripts/browse /scripts/gitdata /scripts/review /scripts/issues
+                  cp -a /cm/auth/.    /scripts/auth/
+                  cp -a /cm/browse/.  /scripts/browse/
+                  cp -a /cm/gitdata/. /scripts/gitdata/
+                  cp -a /cm/review/.  /scripts/review/
+                  cp -a /cm/issues/.  /scripts/issues/
+                  cp -a /cm/mix/.     /scripts/
+                  ls -lah /scripts /scripts/auth /scripts/browse /scripts/gitdata /scripts/review /scripts/issues
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                - name: cm-auth
+                  mountPath: /cm/auth
+                  readOnly: true
+                - name: cm-browse
+                  mountPath: /cm/browse
+                  readOnly: true
+                - name: cm-gitdata
+                  mountPath: /cm/gitdata
+                  readOnly: true
+                - name: cm-review
+                  mountPath: /cm/review
+                  readOnly: true
+                - name: cm-issues
+                  mountPath: /cm/issues
+                  readOnly: true
+                - name: cm-mix
+                  mountPath: /cm/mix
+                  readOnly: true
+
+          containers:
+            - name: k6
+              image: grafana/k6:0.49.0
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ceu"]
+              args:
+                - |
+                  hour="$(date +%H)"
+                  day="$(date +%Y%m%d)"
+                  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+
+                  in_list() { x="$1"; shift; for a in "$@"; do [ "$a" = "$x" ] && return 0; done; return 1; }
+
+                  LOW_HOURS="${LOW_HOURS:-00 01 02 03 04 05 06 07 08 12 13 21 22 23}"
+                  PEAK_HOURS="${PEAK_HOURS:-17 18}"
+
+                  if in_list "$hour" $PEAK_HOURS; then
+                    PROFILE="peak"
+                  elif in_list "$hour" $LOW_HOURS; then
+                    PROFILE="low"
+                  else
+                    PROFILE="normal"
+                  fi
+                  export PROFILE
+
+                  # ========= Adjusted to the A/B/C parameters you provided =========
+
+                  apply_low() {
+                    export DURATION="55m" SLEEP_SECONDS="4"
+                    export TOTAL_VUS="2" VUS="2"
+
+                    # A. off-peak traffic (low)
+                    export W_AUTH="0" W_BROWSE="70" W_REVIEW="10" W_ISSUES="15" W_GITDATA="5"
+
+                    export TH_FAIL_RATE_MAX="0.10" TH_P95_MS_MAX="5000" TH_CHECKS_MIN="0.90"
+
+                    export PAGES="1" PER_PAGE="20"
+                    export ENABLE_DETAIL="true"
+
+                    export ENABLE_COLLABORATORS="false"
+
+                    # low: do not request contents/raw, so REPO_FILE_PATH can be left empty
+                    export ENABLE_CONTENTS="false" ENABLE_RAW="false"
+                    export REPO_FILE_PATH=""
+                    export REF="" RAW_REF_MODE="query"
+
+                    export ENABLE_REVIEWS="true" ENABLE_REVIEW_COMMENTS="false" ENABLE_ISSUE_COMMENTS="false"
+
+                    export WRITE_RATIO="0.003" CLEANUP="true" TITLE_PREFIX="[k6]"
+                    export ENABLE_USER_REPOS="false"
+                  }
+
+                  apply_normal() {
+                    export DURATION="55m" SLEEP_SECONDS="2"
+                    export TOTAL_VUS="6" VUS="6"
+
+                    # B. normal traffic (normal)
+                    export W_AUTH="0" W_BROWSE="55" W_REVIEW="20" W_ISSUES="20" W_GITDATA="5"
+
+                    export TH_FAIL_RATE_MAX="0.05" TH_P95_MS_MAX="3000" TH_CHECKS_MIN="0.95"
+
+                    export PAGES="2" PER_PAGE="20"
+                    export ENABLE_DETAIL="true"
+
+                    export ENABLE_COLLABORATORS="false"
+
+                    export ENABLE_CONTENTS="true" ENABLE_RAW="false"
+                    export REPO_FILE_PATH="README.md"   # Ensure this file exists reliably in the repository
+                    export REF="" RAW_REF_MODE="query"
+
+                    export ENABLE_REVIEWS="true" ENABLE_REVIEW_COMMENTS="true" ENABLE_ISSUE_COMMENTS="false"
+
+                    export WRITE_RATIO="0.01" CLEANUP="true" TITLE_PREFIX="[k6]"
+                    export ENABLE_USER_REPOS="false"
+                  }
+
+                  apply_peak() {
+                    export DURATION="55m" SLEEP_SECONDS="1"
+                    export TOTAL_VUS="10" VUS="10"
+
+                    # C. peak traffic (peak)
+                    export W_AUTH="0" W_BROWSE="40" W_REVIEW="30" W_ISSUES="20" W_GITDATA="10"
+
+                    export TH_FAIL_RATE_MAX="0.08" TH_P95_MS_MAX="4500" TH_CHECKS_MIN="0.93"
+
+                    export PAGES="3" PER_PAGE="30"
+                    export ENABLE_DETAIL="true"
+
+                    export ENABLE_COLLABORATORS="false"
+
+                    export ENABLE_CONTENTS="true" ENABLE_RAW="true"
+                    export REPO_FILE_PATH="README.md"   # Ensure this file exists reliably in the repository
+                    export REF="" RAW_REF_MODE="query"
+
+                    export ENABLE_REVIEWS="true" ENABLE_REVIEW_COMMENTS="true" ENABLE_ISSUE_COMMENTS="true"
+
+                    export WRITE_RATIO="0.02" CLEANUP="true" TITLE_PREFIX="[k6]"
+                    export ENABLE_USER_REPOS="false"
+                  }
+
+                  case "$PROFILE" in
+                    low)    apply_low ;;
+                    normal) apply_normal ;;
+                    peak)   apply_peak ;;
+                    *)      apply_normal ;;
+                  esac
+
+                  run_id="${PROFILE}-${JOB_NAME:-job}-${POD_NAME:-pod}-${ts}"
+                  out="/logs/gitea/api/${PROFILE}/${day}"
+                  mkdir -p "$out"
+
+                  echo "[runner] hour=${hour} profile=${PROFILE} run_id=${run_id}"
+                  echo "[runner] output=${out}"
+
+                  env | egrep '^(PROFILE|DURATION|SLEEP_SECONDS|TOTAL_VUS|VUS|W_|TH_|PAGES|PER_PAGE|ENABLE_|WRITE_RATIO|CLEANUP|TITLE_PREFIX|REPO_FILE_PATH|REF|RAW_REF_MODE|BASE_URL|OWNER|REPO)=' \
+                    > "${out}/env-${run_id}.txt"
+
+                  k6 run /scripts/api_mix.js \
+                    --tag run_id="${run_id}" \
+                    --tag profile="${PROFILE}" \
+                    --tag hour="${hour}" \
+                    --summary-export "${out}/summary-${run_id}.json" \
+                    2>&1 | tee "${out}/run-${run_id}.log"
+
+              env:
+                - name: LOW_HOURS
+                  value: "00 01 02 03 04 05 06 07 08 12 13 21 22 23"
+                - name: PEAK_HOURS
+                  value: "17 18"
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: JOB_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.labels['batch.kubernetes.io/job-name']
+
+                # Base (fixed items)
+                - name: BASE_URL
+                  value: "https://gitea.example.com"
+                - name: INSECURE_TLS
+                  value: "true"
+
+                # Required parameters (the API script needs OWNER/REPO)
+                - name: OWNER
+                  value: "nixwl"
+                - name: REPO
+                  value: "tquic"
+
+                # Token
+                - name: GITEA_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: k6-gitea-secret
+                      key: token
+
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                  readOnly: true
+                - name: k6-logs
+                  mountPath: /logs
+
+          volumes:
+            - name: scripts
+              emptyDir: {}
+            - name: k6-logs
+              persistentVolumeClaim:
+                claimName: k6-logs-pvc
+
+            - name: cm-auth
+              configMap:
+                name: k6-gitea-api-auth-script
+            - name: cm-browse
+              configMap:
+                name: k6-gitea-api-browse-script
+            - name: cm-gitdata
+              configMap:
+                name: k6-gitea-api-gitdata-script
+            - name: cm-review
+              configMap:
+                name: k6-gitea-api-review-script
+            - name: cm-issues
+              configMap:
+                name: k6-gitea-api-issues-script
+            - name: cm-mix
+              configMap:
+                name: k6-gitea-api-mix-scripts

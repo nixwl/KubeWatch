@@ -1,0 +1,190 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-mix-script
+  namespace: traffic
+data:
+  rt_mix.js: |
+    import { sleep } from "k6";
+    import preflight from "./preflight_mix.js";
+    import intake from "./intake_mix.js";
+    import browseown from "./browseown.js";
+    import followup from "./followup_mix.js";
+    import triage from "./triage.js";
+    import notes from "./notes.js";
+    import update from "./update.js";
+    import workflow from "./workflow_mix.js";
+    import handoff from "./handoff.js";
+    import lifecycle from "./lifecycle_mix.js";
+    import cleanup from "./cleanup.js";
+
+    // Pull thresholds from the original scripts (they already build op-tagged thresholds)
+    import { options as browseOpt } from "./browseown.js";
+    import { options as followOpt } from "./followup_mix.js";
+    import { options as triageOpt } from "./triage.js";
+    import { options as notesOpt } from "./notes.js";
+    import { options as updateOpt } from "./update.js";
+    import { options as workflowOpt } from "./workflow_mix.js";
+    import { options as handoffOpt } from "./handoff.js";
+    import { options as lifecycleOpt } from "./lifecycle_mix.js";
+    import { options as cleanupOpt } from "./cleanup.js";
+
+    function envStr(k, defVal) {
+      const v = __ENV[k];
+      return (v === undefined || v === null || `${v}`.trim() === "") ? defVal : `${v}`;
+    }
+    function envBool(k, defVal) {
+      const v = envStr(k, String(defVal)).toLowerCase();
+      return v === "true" || v === "1" || v === "yes" || v === "y";
+    }
+    function envInt(k, defVal) {
+      const n = parseInt(__ENV[k], 10);
+      return Number.isFinite(n) ? n : defVal;
+    }
+    function envFloat(k, defVal) {
+      const n = parseFloat(__ENV[k]);
+      return Number.isFinite(n) ? n : defVal;
+    }
+
+    function uniqArr(arr) {
+      return Array.from(new Set((arr || []).flat()));
+    }
+
+    function mergeThresholds(...objs) {
+      const out = {};
+      for (const o of objs) {
+        if (!o) continue;
+        for (const [k, v] of Object.entries(o)) {
+          if (!out[k]) out[k] = [];
+          out[k] = uniqArr(out[k].concat(v));
+        }
+      }
+      return out;
+    }
+
+    function buildThresholds() {
+      const enabled = envBool("TH_ENABLE", true);
+      if (!enabled) return undefined;
+
+      const failMax = envFloat("TH_FAIL_RATE_MAX", 0.02);
+      const p95Max = envInt("TH_P95_MS_MAX", 4500);
+
+      // base thresholds
+      const base = {
+        http_req_failed: [`rate<${failMax}`],
+        http_req_duration: [`p(95)<${p95Max}`],
+      };
+
+      // merge op-tag thresholds from all scripts, but keep base keys controlled here
+      const merged = mergeThresholds(
+        (browseOpt && browseOpt.thresholds) || {},
+        (followOpt && followOpt.thresholds) || {},
+        (triageOpt && triageOpt.thresholds) || {},
+        (notesOpt && notesOpt.thresholds) || {},
+        (updateOpt && updateOpt.thresholds) || {},
+        (workflowOpt && workflowOpt.thresholds) || {},
+        (handoffOpt && handoffOpt.thresholds) || {},
+        (lifecycleOpt && lifecycleOpt.thresholds) || {},
+        (cleanupOpt && cleanupOpt.thresholds) || {},
+      );
+
+      delete merged.http_req_failed;
+      delete merged.http_req_duration;
+
+      return { ...base, ...merged };
+    }
+
+    function pickWeighted(items) {
+      // items: [{w:number, fn:function}]
+      let total = 0;
+      for (const it of items) total += Math.max(0, it.w);
+      if (total <= 0) return items[0]?.fn;
+
+      let r = Math.random() * total;
+      for (const it of items) {
+        r -= Math.max(0, it.w);
+        if (r <= 0) return it.fn;
+      }
+      return items[items.length - 1].fn;
+    }
+
+    export function setup() {
+      if (envBool("MIX_PREFLIGHT", true)) {
+        // if preflight fails, it throws and aborts the run
+        preflight();
+      }
+      return {};
+    }
+
+    export function requester_pool() {
+      const wBrowse = envInt("W_REQ_BROWSEOWN", 55);
+      const wFollow = envInt("W_REQ_FOLLOWUP", 25);
+      const wIntake = envInt("W_REQ_INTAKE", 20);
+
+      const fn = pickWeighted([
+        { w: wBrowse, fn: browseown },
+        { w: wFollow, fn: followup },
+        { w: wIntake, fn: intake },
+      ]);
+      fn && fn();
+    }
+
+    export function staff_pool() {
+      const fn = pickWeighted([
+        { w: envInt("W_ST_TRIAGE", 30), fn: triage },
+        { w: envInt("W_ST_NOTES", 25), fn: notes },
+        { w: envInt("W_ST_UPDATE", 20), fn: update },
+        { w: envInt("W_ST_WORKFLOW", 10), fn: workflow },
+        { w: envInt("W_ST_HANDOFF", 10), fn: handoff },
+        { w: envInt("W_ST_LIFECYCLE", 5), fn: lifecycle },
+      ]);
+      fn && fn();
+    }
+
+    export function cleanup_pool() {
+      cleanup();
+    }
+
+    // build scenarios dynamically so we can disable pools by setting VUs=0
+    const duration = envStr("DURATION", "55m");
+    const scenarios = {};
+    const vusReq = envInt("MIX_VUS_REQUESTERS", 2);
+    const vusStaff = envInt("MIX_VUS_STAFFS", 3);
+
+    if (vusReq > 0) {
+      scenarios.requester = {
+        executor: "constant-vus",
+        vus: vusReq,
+        duration,
+        exec: "requester_pool",
+        tags: { pool: "requester" },
+      };
+    }
+    if (vusStaff > 0) {
+      scenarios.staff = {
+        executor: "constant-vus",
+        vus: vusStaff,
+        duration,
+        exec: "staff_pool",
+        tags: { pool: "staff" },
+      };
+    }
+
+    const cleanupEnabled = envBool("CLEANUP_ENABLED", true);
+    const vusCleanup = envInt("MIX_VUS_CLEANUP", 1);
+    if (cleanupEnabled && vusCleanup > 0) {
+      scenarios.cleanup = {
+        executor: "constant-vus",
+        vus: vusCleanup,
+        startTime: envStr("CLEANUP_START", "50m"),
+        duration: envStr("CLEANUP_DURATION", "5m"),
+        exec: "cleanup_pool",
+        tags: { pool: "cleanup" },
+      };
+    }
+
+    export const options = {
+      insecureSkipTLSVerify: envBool("INSECURE_TLS", true),
+      scenarios,
+      thresholds: buildThresholds(),
+    };

@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-followup-env
+  namespace: traffic
+data:
+  BASE_URL: "https://rt.example.com"
+  INSECURE_TLS: "true"
+  RT_QUEUE: "Traffic"
+
+  # k6 runtime shape
+  VUS: "6"
+  DURATION: "5m"
+  SLEEP_MIN: "0.1"
+  SLEEP_MAX: "0.6"
+
+  # requester user-pool selection strategy
+  REQUESTER_PICK_MODE: "roundrobin" # roundrobin | random
+
+  # Pagination
+  PER_PAGE: "20"
+
+  # Default sorting (used when the template does not specify ORDER BY)
+  DEFAULT_ORDERBY: "LastUpdated"
+  DEFAULT_ORDER: "DESC"
+
+  # Pick tickets from the list: random | first
+  PICK_TICKET_MODE: "random"
+
+  # Follow-up mode:
+  # correspond: POST /ticket/:id/correspond
+  # comment:    POST /ticket/:id/comment
+  # mix:        mix by MIX_* ratios
+  MODE: "correspond" # correspond | comment | mix
+  MIX_CORRESPOND_RATIO: "0.80"
+  MIX_COMMENT_RATIO: "0.20"
+
+  # Written content marker
+  FOLLOWUP_PREFIX: "k6-followup"
+
+  # Comment duration tracking (only applies to comment mode)
+  TIME_TAKEN_MIN: "0"
+  TIME_TAKEN_MAX: "1"
+
+  # Read-after-write
+  VERIFY_AFTER_WRITE: "true"
+  HISTORY_RATIO: "0.80" # When verify is enabled, ratio of history fetches (0~1)
+  GET_RATIO: "0.20" # When verify is enabled, ratio of ticket/:id fetches (0~1)
+
+  # TicketSQL templates: prefer consuming the intake pool first (avoids non-test tickets that can trigger ACL/email side effects)
+  TICKETSQL_TEMPLATES: |-
+    [
+      "Queue='Traffic' AND Subject LIKE 'k6-intake%' AND Status!='deleted' ORDER BY LastUpdated DESC",
+      "Queue='Traffic' AND Subject LIKE 'k6-%' AND Status!='deleted' ORDER BY LastUpdated DESC"
+    ]
+
+  # =========================
+  # Thresholds (tunable)
+  # =========================
+  TH_ENABLE: "true"
+  TH_FAIL_RATE_MAX: "0.01"
+  TH_P95_MS_MAX: "4500"
+
+  # Per-op thresholds (0 = disabled)
+  TH_SEARCH_P95_MS: "0" # tickets_search
+  TH_CORRESPOND_P95_MS: "0" # ticket_correspond
+  TH_COMMENT_P95_MS: "0" # ticket_comment
+  TH_HIST_P95_MS: "0" # ticket_history
+  TH_GET_P95_MS: "0" # ticket_get

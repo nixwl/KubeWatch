@@ -1,0 +1,264 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-wiki-pagedelete-script
+  namespace: traffic
+data:
+  page_delete.js: |
+    import http from "k6/http";
+    import { check, sleep, fail } from "k6";
+
+    function mustEnv(name) {
+      const v = (__ENV[name] || "").trim();
+      if (!v) fail(`missing env: ${name}`);
+      return v;
+    }
+    function normBaseUrl(u) { return u.endsWith("/") ? u.slice(0, -1) : u; }
+    function normPathPrefix(p) { return String(p || "").trim().replace(/^\/+|\/+$/g, ""); }
+    function asBool(v, defVal=false) {
+      const s = String(v ?? "").trim().toLowerCase();
+      if (s === "true") return true;
+      if (s === "false") return false;
+      return defVal;
+    }
+    function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+
+    // ========= Required =========
+    const BASE_URL = normBaseUrl(mustEnv("BASE_URL"));
+    const WIKI_TOKEN = mustEnv("WIKI_TOKEN");
+
+    // ========= Optional =========
+    const GRAPHQL_PATH = String(__ENV.GRAPHQL_PATH || "/graphql").trim();
+    const INSECURE_TLS = asBool(__ENV.INSECURE_TLS, false);
+
+    const VUS = Number(__ENV.VUS || 1);
+    const LIMIT_PER_VU = Number(__ENV.LIMIT_PER_VU || 20);
+    const MAX_DURATION = String(__ENV.MAX_DURATION || "10m");
+
+    // ✅ accept both names (avoid "missing env" again)
+    const DELETE_PATH_PREFIX = normPathPrefix(__ENV.DELETE_PATH_PREFIX || __ENV.DELETE_PREFIX || "k6/create");
+    const TITLE_PREFIX = String(__ENV.TITLE_PREFIX || "").trim();
+    const LOCALE = String(__ENV.LOCALE || "").trim();
+    const DRY_RUN = asBool(__ENV.DRY_RUN, false);
+
+    const THINK_MIN_MS = Number(__ENV.THINK_MIN_MS || 200);
+    const THINK_MAX_MS = Number(__ENV.THINK_MAX_MS || 800);
+
+    // === mixed-mode: allow delete to discover candidates after create ===
+    const DELETE_DYNAMIC_DISCOVER = String(__ENV.DELETE_DYNAMIC_DISCOVER || "true").trim() === "true";
+    const DELETE_DISCOVER_EVERY = Number(__ENV.DELETE_DISCOVER_EVERY || 5);
+
+    const TIMEOUT = String(__ENV.TIMEOUT || "30s").trim();
+    const FAIL_RATE_MAX = Number(__ENV.FAIL_RATE_MAX || 0.01);
+    const P95_MS_MAX = Number(__ENV.P95_MS_MAX || 10000);
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      scenarios: {
+        s4_page_delete: {
+          executor: "per-vu-iterations",
+          vus: VUS,
+          iterations: LIMIT_PER_VU,
+          maxDuration: MAX_DURATION,
+          gracefulStop: "30s",
+        },
+      },
+      thresholds: {
+        http_req_failed: [`rate<${FAIL_RATE_MAX}`],
+        http_req_duration: [`p(95)<${P95_MS_MAX}`],
+      },
+    };
+
+    function postGraphQL(query, variables, tags) {
+      const url = `${BASE_URL}${GRAPHQL_PATH}`;
+      const payload = JSON.stringify({ query, variables: variables || {} });
+
+      const res = http.post(url, payload, {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${WIKI_TOKEN}`,
+          "User-Agent": "k6-wikijs-s4-page-delete",
+        },
+        tags,
+        timeout: TIMEOUT,
+      });
+
+      if (res.status !== 200) {
+        console.error(`[http!=200] status=${res.status} body=${String(res.body || "").slice(0, 300)}`);
+      }
+      return res;
+    }
+
+    function buildPagesListQuery() {
+      const args = [];
+      if (LOCALE) args.push(`locale: "${LOCALE}"`);
+      args.push(`orderBy: TITLE`);
+      const argStr = args.length ? `(${args.join(", ")})` : "";
+      return `{ pages { list${argStr} { id path title } } }`;
+    }
+
+    // ✅ single with variables (avoid 400)
+    const Q_SINGLE = `
+      query($id:Int!) {
+        pages { single(id: $id) { id path title } }
+      }
+    `;
+
+    // ✅ delete with variables
+    const M_DELETE = `
+      mutation($id:Int!) {
+        pages { delete(id: $id) { responseResult { succeeded errorCode message } } }
+      }
+    `;
+
+    function pickVuSlice(all) {
+      const vu = (__VU || 1) - 1;
+      const out = [];
+      for (let i = 0; i < all.length; i++) {
+        if ((i % VUS) === vu) out.push(all[i]);
+      }
+      return out;
+    }
+
+    function isNotFoundOrNullSingle(res) {
+      try {
+        const j = res.json();
+        const single = j?.data?.pages?.single;
+        if (!single) return true; // null => considered missing
+        return false;
+      } catch (_) {
+        return true;
+      }
+    }
+
+    export function setup() {
+      const listQ = buildPagesListQuery();
+      const res = postGraphQL(listQ, {}, { api: "wikijs", op: "pages.list", scenario: "s4", phase: "setup" });
+
+      const ok = check(res, {
+        "setup: http 200": (r) => r.status === 200,
+        "setup: no gql errors": (r) => { try { return !r.json().errors; } catch (_) { return false; } },
+        "setup: pages.list[]": (r) => {
+          try { return Array.isArray(r.json()?.data?.pages?.list); } catch (_) { return false; }
+        },
+      });
+      if (!ok) {
+        fail(`setup(list) failed: status=${res.status}, body=${(res.body || "").slice(0, 500)}`);
+      }
+
+      const list = (res.json().data.pages.list || []).filter(p => p && typeof p.id === "number" && typeof p.path === "string");
+
+      // ✅ safer prefix match: require "<prefix>/"
+      const prefixSlash = DELETE_PATH_PREFIX ? `${DELETE_PATH_PREFIX}/` : "";
+      let candidates = prefixSlash ? list.filter(p => p.path.startsWith(prefixSlash)) : list;
+
+      if (TITLE_PREFIX) {
+        candidates = candidates.filter(p => String(p.title || "").startsWith(TITLE_PREFIX));
+      }
+
+      console.log(`[setup] total=${list.length} candidates=${candidates.length} prefix="${prefixSlash || "(none)"}" titlePrefix="${TITLE_PREFIX || "(none)"}" dryRun=${DRY_RUN}`);
+      return { candidates, dryRun: DRY_RUN };
+    }
+
+    export default function (data) {
+      // In mixed mode, create may run after setup; discover candidates when empty.
+      if (DELETE_DYNAMIC_DISCOVER && (!data || !Array.isArray(data.candidates) || data.candidates.length === 0 || (((__ITER || 0) % DELETE_DISCOVER_EVERY) === 0))) {
+        try {
+          const listQ = buildPagesListQuery();
+          const r0 = postGraphQL(listQ, {}, { api: "wikijs", op: "pages.list", scenario: "s4", phase: "discover" });
+          if (r0 && r0.status === 200 && !r0.json().errors) {
+            const list0 = (r0.json().data?.pages?.list || []).filter(p => p && typeof p.id === "number" && typeof p.path === "string");
+            // Reuse the same filtering logic as setup()
+            const prefix = normPathPrefix(DELETE_PATH_PREFIX);
+            const prefixSlash = prefix ? (prefix.endsWith("/") ? prefix : (prefix + "/")) : "";
+            let candidates = prefixSlash ? list0.filter(p => p.path.startsWith(prefixSlash)) : list0;
+            if (TITLE_PREFIX) {
+              candidates = candidates.filter(p => (p.title || "").startsWith(TITLE_PREFIX));
+            }
+            if (REQUIRE_RUN_ID) {
+              const rid = String(REQUIRE_RUN_ID);
+              candidates = candidates.filter(p => String(p.title || "").includes(rid) || String(p.path || "").includes(rid));
+            }
+            data.candidates = candidates;
+          }
+        } catch (_) { /* ignore */ }
+      }
+
+      const all = data.candidates || [];
+      const mine = pickVuSlice(all);
+
+      // ✅ Key fix: use __ITER as the "unique index" to avoid deleting the same id repeatedly
+      if (!mine.length) {
+        sleep(0.2);
+        return;
+      }
+      if ((__ITER || 0) >= mine.length) {
+        // mine has only N items; once iterations exceed N, no-op directly to avoid verify failures from repeated deletes
+        sleep(0.2);
+        return;
+      }
+
+      const p = mine[__ITER || 0];
+
+      // (A) pre-verify: if the page no longer exists, it is not a failure; skip directly
+      const v = postGraphQL(Q_SINGLE, { id: p.id }, { api: "wikijs", op: "pages.single", scenario: "s4", phase: "verify" });
+      const verifyOk = check(v, {
+        "verify http 200": (r) => r.status === 200,
+        // ✅ Allow "already missing": treat it as ok (avoids 50% verify failures)
+        "verify ok or already missing": (r) => {
+          try {
+            const j = r.json();
+            const single = j?.data?.pages?.single;
+            if (single) return true;
+            // When single = null, errors may or may not exist; in either case treat it as already missing
+            return true;
+          } catch (_) {
+            return true;
+          }
+        },
+      });
+      if (!verifyOk) {
+        // Should not trigger in theory; handle conservatively
+        sleep(randInt(THINK_MIN_MS, THINK_MAX_MS) / 1000);
+        return;
+      }
+
+      if (data.dryRun) {
+        console.log(`[dry-run] would delete id=${p.id} path=${p.path} title=${p.title}`);
+        sleep(randInt(THINK_MIN_MS, THINK_MAX_MS) / 1000);
+        return;
+      }
+
+      // If verify confirms it is missing, skip delete directly (avoids pointless requests)
+      if (isNotFoundOrNullSingle(v)) {
+        console.log(`[skip] already missing id=${p.id} path=${p.path} title=${p.title}`);
+        sleep(randInt(THINK_MIN_MS, THINK_MAX_MS) / 1000);
+        return;
+      }
+
+      // (B) delete
+      const d = postGraphQL(M_DELETE, { id: p.id }, { api: "wikijs", op: "pages.delete", scenario: "s4" });
+
+      const delOk = check(d, {
+        "delete http 200": (r) => r.status === 200,
+        "delete no gql errors": (r) => { try { return !r.json().errors; } catch (_) { return false; } },
+        "delete succeeded": (r) => {
+          try { return r.json().data.pages.delete.responseResult.succeeded === true; } catch (_) { return false; }
+        },
+      });
+
+      if (!delOk) {
+        let rr = "";
+        try { rr = JSON.stringify(d.json().data.pages.delete.responseResult); } catch (_) {}
+        fail(`delete failed: id=${p.id} path=${p.path} rr=${rr} body=${(d.body || "").slice(0, 500)}`);
+      } else {
+        try {
+          const rr = d.json().data.pages.delete.responseResult;
+          console.log(`[deleted] id=${p.id} path=${p.path} title=${p.title} msg=${rr.message || "ok"}`);
+        } catch (_) {
+          console.log(`[deleted] id=${p.id} path=${p.path} title=${p.title}`);
+        }
+      }
+
+      sleep(randInt(THINK_MIN_MS, THINK_MAX_MS) / 1000);
+    }

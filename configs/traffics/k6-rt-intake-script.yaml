@@ -1,0 +1,181 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k6-rt-intake-script
+  namespace: traffic
+data:
+  intake.js: |-
+    import http from "k6/http";
+    import { check, fail, sleep } from "k6";
+    import { SharedArray } from "k6/data";
+
+    const BASE_URL = __ENV.BASE_URL;
+    const INSECURE_TLS = (__ENV.INSECURE_TLS || "true").toLowerCase() === "true";
+    const RT_QUEUE = __ENV.RT_QUEUE || "Traffic";
+
+    const VUS = parseInt(__ENV.VUS || "6", 10);
+    const DURATION = __ENV.DURATION || "5m";
+    const SLEEP_MIN = parseFloat(__ENV.SLEEP_MIN || "0.1");
+    const SLEEP_MAX = parseFloat(__ENV.SLEEP_MAX || "0.6");
+
+    const REQUESTER_PICK_MODE = (__ENV.REQUESTER_PICK_MODE || "roundrobin").toLowerCase();
+    const VERIFY_AFTER_CREATE = (__ENV.VERIFY_AFTER_CREATE || "true").toLowerCase() === "true";
+    const HISTORY_RATIO = parseFloat(__ENV.HISTORY_RATIO || "0.7");
+
+    const SUBJECT_PREFIX = (__ENV.SUBJECT_PREFIX || "k6-intake").trim();
+    const CONTENT_PREFIX = (__ENV.CONTENT_PREFIX || "k6-intake-content").trim();
+
+    // Optional: custom fields
+    let CF = {};
+    try { CF = JSON.parse(__ENV.CF_JSON || "{}"); } catch (e) { CF = {}; }
+
+    // =========================
+    // Thresholds from ENV
+    // =========================
+    function envBool(k, defVal) {
+      const v = (__ENV[k] ?? String(defVal)).toString().toLowerCase();
+      return v === "true" || v === "1" || v === "yes" || v === "y";
+    }
+    function envFloat(k, defVal) {
+      const v = parseFloat(__ENV[k]);
+      return Number.isFinite(v) ? v : defVal;
+    }
+    function envInt(k, defVal) {
+      const v = parseInt(__ENV[k], 10);
+      return Number.isFinite(v) ? v : defVal;
+    }
+
+    const TH_ENABLE = envBool("TH_ENABLE", true);
+    const TH_FAIL_RATE_MAX = envFloat("TH_FAIL_RATE_MAX", 0.01);
+    const TH_P95_MS_MAX = envInt("TH_P95_MS_MAX", 3000);
+
+    const TH_CREATE_P95_MS = envInt("TH_CREATE_P95_MS", 0);
+    const TH_GET_P95_MS    = envInt("TH_GET_P95_MS", 0);
+    const TH_HIST_P95_MS   = envInt("TH_HIST_P95_MS", 0);
+
+    function buildThresholds() {
+      if (!TH_ENABLE) return {};
+      const t = {
+        http_req_failed:   [`rate<${TH_FAIL_RATE_MAX}`],
+        http_req_duration: [`p(95)<${TH_P95_MS_MAX}`],
+      };
+      if (TH_CREATE_P95_MS > 0) t[`http_req_duration{op:ticket_create}`] = [`p(95)<${TH_CREATE_P95_MS}`];
+      if (TH_GET_P95_MS > 0)    t[`http_req_duration{op:ticket_get}`]     = [`p(95)<${TH_GET_P95_MS}`];
+      if (TH_HIST_P95_MS > 0)   t[`http_req_duration{op:ticket_history}`] = [`p(95)<${TH_HIST_P95_MS}`];
+      return t;
+    }
+
+    export const options = {
+      insecureSkipTLSVerify: INSECURE_TLS,
+      vus: VUS,
+      duration: DURATION,
+      thresholds: buildThresholds(),
+    };
+
+    // SharedArray only accepts arrays; wrap users.json (an object) in an array and take [0]
+    const USERS = new SharedArray("users", () => [JSON.parse(open("./data/users.json"))])[0];
+
+    function must(res, name) {
+      const ok = check(res, { [`${name} status`]: (r) => r.status >= 200 && r.status < 400 });
+      if (!ok) {
+        fail(`${name} failed: status=${res.status} body=${(res.body || "").slice(0, 400)}`);
+      }
+    }
+
+    function j(res) {
+      try { return res.json(); } catch (e) { return null; }
+    }
+
+    function hdr(token, tags) {
+      return {
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `token ${token}`,
+        },
+        tags: tags || {},
+      };
+    }
+
+    function pickRequester() {
+      const arr = USERS.requesters;
+      if (!arr || arr.length === 0) fail("empty requesters pool in users.json");
+
+      if (REQUESTER_PICK_MODE === "random") {
+        return arr[Math.floor(Math.random() * arr.length)];
+      }
+      return arr[(__VU - 1) % arr.length];
+    }
+
+    function randBetween(a, b) {
+      return a + Math.random() * (b - a);
+    }
+
+    function ticketIdFrom(obj, res) {
+      if (obj && typeof obj.id === "number") return obj.id;
+      if (obj && obj.id) {
+        const n = parseInt(obj.id, 10);
+        if (Number.isFinite(n)) return n;
+      }
+      const u = (obj && obj._url) ? String(obj._url) : "";
+      let m = u.match(/\/ticket\/(\d+)\b/);
+      if (m) return parseInt(m[1], 10);
+
+      const loc = res && res.headers && (res.headers.Location || res.headers.location);
+      if (loc) {
+        m = String(loc).match(/\/ticket\/(\d+)\b/);
+        if (m) return parseInt(m[1], 10);
+      }
+      return null;
+    }
+
+    function buildCreateBody(requesterName) {
+      const subject = `${SUBJECT_PREFIX} | req=${requesterName} | ts=${Date.now()} | vu=${__VU} | iter=${__ITER} | rnd=${Math.random().toString(16).slice(2)}`;
+      const content = `${CONTENT_PREFIX} | by=${requesterName} | ts=${Date.now()}`;
+
+      // RT REST2 supports passing fields directly; adjust custom fields here as needed for your environment (kept injectable)
+      return Object.assign(
+        { Queue: RT_QUEUE, Subject: subject, Content: content },
+        CF && typeof CF === "object" ? CF : {}
+      );
+    }
+
+    export default function () {
+      if (!BASE_URL) fail("BASE_URL is required");
+
+      const requester = pickRequester();
+
+      // 1) Create the ticket
+      const body = buildCreateBody(requester.name);
+      const r1 = http.post(
+        `${BASE_URL}/REST/2.0/ticket`,
+        JSON.stringify(body),
+        hdr(requester.token, { scenario: "intake", role: "requester", op: "ticket_create", queue: RT_QUEUE })
+      );
+      must(r1, "POST /ticket");
+      const created = j(r1);
+      const id = ticketIdFrom(created, r1);
+      if (!id) {
+        fail(`cannot extract ticket id from create response: ${(r1.body || "").slice(0, 400)}`);
+      }
+
+      if (VERIFY_AFTER_CREATE) {
+        // 2) Read after write: ticket details
+        const r2 = http.get(
+          `${BASE_URL}/REST/2.0/ticket/${id}`,
+          hdr(requester.token, { scenario: "intake", role: "requester", op: "ticket_get", queue: RT_QUEUE })
+        );
+        must(r2, "GET /ticket/:id");
+
+        // 3) Read after write: history (by ratio)
+        if (Math.random() < HISTORY_RATIO) {
+          const r3 = http.get(
+            `${BASE_URL}/REST/2.0/ticket/${id}/history`,
+            hdr(requester.token, { scenario: "intake", role: "requester", op: "ticket_history", queue: RT_QUEUE })
+          );
+          must(r3, "GET /ticket/:id/history");
+        }
+      }
+
+      sleep(randBetween(SLEEP_MIN, SLEEP_MAX));
+    }

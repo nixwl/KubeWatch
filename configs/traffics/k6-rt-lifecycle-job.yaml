@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-rt-lifecycle-job
+  namespace: traffic
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  activeDeadlineSeconds: 1800
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        node-role: worker
+      volumes:
+        - name: scripts
+          projected:
+            sources:
+              - configMap:
+                  name: k6-rt-lifecycle-script
+                  items:
+                    - key: lifecycle.js
+                      path: lifecycle.js
+              - secret:
+                  name: k6-rt-users
+                  items:
+                    - key: users.json
+                      path: data/users.json
+      containers:
+        - name: k6
+          image: ghcr.io/grafana/k6:latest
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+          envFrom:
+            - configMapRef:
+                name: k6-rt-lifecycle-env
+          command: ["k6", "run", "/scripts/lifecycle.js"]

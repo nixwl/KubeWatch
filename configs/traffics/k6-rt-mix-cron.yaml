@@ -1,0 +1,321 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: k6-rt-mixed-cron
+  namespace: traffic
+spec:
+  schedule: "0 * * * *" # One run per hour
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 4200 # 55m + buffer
+      ttlSecondsAfterFinished: 3600
+      template:
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            node-role: worker
+
+          volumes:
+            - name: scripts
+              emptyDir: {}
+
+            - name: k6-logs
+              persistentVolumeClaim:
+                claimName: k6-logs-pvc
+
+            # existing single-scenario script configmaps
+            - name: cm-preflight
+              configMap: { name: k6-rt-preflight-script }
+            - name: cm-intake
+              configMap: { name: k6-rt-intake-script }
+            - name: cm-browseown
+              configMap: { name: k6-rt-browseown-script }
+            - name: cm-triage
+              configMap: { name: k6-rt-triage-script }
+            - name: cm-notes
+              configMap: { name: k6-rt-notes-script }
+            - name: cm-update
+              configMap: { name: k6-rt-update-script }
+            - name: cm-workflow
+              configMap: { name: k6-rt-workflow-script }
+            - name: cm-followup
+              configMap: { name: k6-rt-followup-script }
+            - name: cm-handoff
+              configMap: { name: k6-rt-handoff-script }
+            - name: cm-lifecycle
+              configMap: { name: k6-rt-lifecycle-script }
+            - name: cm-cleanup
+              configMap: { name: k6-rt-cleanup-script }
+
+            # new mixed entry script
+            - name: cm-mix
+              configMap: { name: k6-rt-mix-script }
+
+            # users.json secret
+            - name: users
+              secret:
+                secretName: k6-rt-users
+
+          initContainers:
+            - name: assemble-scripts
+              image: rancher/mirrored-library-busybox:1.36.1
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eux
+
+                  mkdir -p /scripts /scripts/data
+
+                  # ConfigMap/Secret volume are symlink-based (..data)
+                  # MUST copy with -L to dereference, avoid broken links after multiple cp
+                  copy_cm() {
+                    name="$1"
+                    src="/cm/${name}"
+                    echo "[assemble] copy from ${src}"
+                    ls -lah "${src}"
+                    cp -L "${src}"/* /scripts/
+                  }
+
+                  copy_cm preflight
+                  copy_cm intake
+                  copy_cm browseown
+                  copy_cm triage
+                  copy_cm notes
+                  copy_cm update
+                  copy_cm workflow
+                  copy_cm followup
+                  copy_cm handoff
+                  copy_cm lifecycle
+                  copy_cm cleanup
+                  copy_cm mix
+
+                  # users.json (k6 open("./data/users.json") expects it)
+                  test -f /users/users.json
+                  cp -L /users/users.json /scripts/data/users.json
+
+                  # ---- patch files to avoid env collisions in one k6 process ----
+                  # 1) MODE conflict: followup vs lifecycle
+                  test -f /scripts/followup.js
+                  cp /scripts/followup.js  /scripts/followup_mix.js
+                  sed -i 's/__ENV\.MODE/__ENV.FOLLOWUP_MODE/g' /scripts/followup_mix.js
+
+                  test -f /scripts/lifecycle.js
+                  cp /scripts/lifecycle.js /scripts/lifecycle_mix.js
+                  sed -i 's/__ENV\.MODE/__ENV.LIFECYCLE_MODE/g' /scripts/lifecycle_mix.js
+
+                  # 2) SUBJECT_PREFIX conflict: preflight / intake / workflow
+                  test -f /scripts/preflight.js
+                  cp /scripts/preflight.js /scripts/preflight_mix.js
+                  sed -i 's/__ENV\.SUBJECT_PREFIX/__ENV.PREFLIGHT_SUBJECT_PREFIX/g' /scripts/preflight_mix.js
+
+                  test -f /scripts/intake.js
+                  cp /scripts/intake.js    /scripts/intake_mix.js
+                  sed -i 's/__ENV\.SUBJECT_PREFIX/__ENV.INTAKE_SUBJECT_PREFIX/g' /scripts/intake_mix.js
+
+                  test -f /scripts/workflow.js
+                  cp /scripts/workflow.js  /scripts/workflow_mix.js
+                  sed -i 's/__ENV\.SUBJECT_PREFIX/__ENV.WORKFLOW_SUBJECT_PREFIX/g' /scripts/workflow_mix.js
+
+                  # sanity check
+                  test -f /scripts/rt_mix.js
+
+                  echo "[assemble] scripts prepared:"
+                  ls -lah /scripts
+                  ls -lah /scripts/data
+
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+
+                - name: cm-preflight
+                  mountPath: /cm/preflight
+                  readOnly: true
+                - name: cm-intake
+                  mountPath: /cm/intake
+                  readOnly: true
+                - name: cm-browseown
+                  mountPath: /cm/browseown
+                  readOnly: true
+                - name: cm-triage
+                  mountPath: /cm/triage
+                  readOnly: true
+                - name: cm-notes
+                  mountPath: /cm/notes
+                  readOnly: true
+                - name: cm-update
+                  mountPath: /cm/update
+                  readOnly: true
+                - name: cm-workflow
+                  mountPath: /cm/workflow
+                  readOnly: true
+                - name: cm-followup
+                  mountPath: /cm/followup
+                  readOnly: true
+                - name: cm-handoff
+                  mountPath: /cm/handoff
+                  readOnly: true
+                - name: cm-lifecycle
+                  mountPath: /cm/lifecycle
+                  readOnly: true
+                - name: cm-cleanup
+                  mountPath: /cm/cleanup
+                  readOnly: true
+
+                - name: cm-mix
+                  mountPath: /cm/mix
+                  readOnly: true
+
+                - name: users
+                  mountPath: /users
+                  readOnly: true
+
+          containers:
+            - name: k6
+              image: ghcr.io/grafana/k6:latest
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ceu"]
+              args:
+                - |
+                  hour="$(date +%H)"
+                  day="$(date +%Y%m%d)"
+                  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+
+                  in_list() { x="$1"; shift; for a in "$@"; do [ "$a" = "$x" ] && return 0; done; return 1; }
+
+                  LOW_HOURS="${LOW_HOURS:-00 01 02 03 04 05 06 07 08 12 13 21 22 23}"
+                  PEAK_HOURS="${PEAK_HOURS:-17 18}"
+
+                  if in_list "$hour" $PEAK_HOURS; then
+                    PROFILE="peak"
+                  elif in_list "$hour" $LOW_HOURS; then
+                    PROFILE="low"
+                  else
+                    PROFILE="normal"
+                  fi
+                  export PROFILE
+
+                  # ===== fixed base =====
+                  export BASE_URL="${BASE_URL:-https://rt.example.com}"
+                  export INSECURE_TLS="${INSECURE_TLS:-true}"
+                  export RT_QUEUE="${RT_QUEUE:-Traffic}"
+
+                  # k6 run window
+                  export DURATION="55m"
+
+                  # ---- env collision safe keys (used by *_mix.js) ----
+                  export FOLLOWUP_MODE="${FOLLOWUP_MODE:-correspond}"     # correspond | comment | mix
+                  export LIFECYCLE_MODE="${LIFECYCLE_MODE:-cycle}"       # cycle | pair
+
+                  export PREFLIGHT_SUBJECT_PREFIX="${PREFLIGHT_SUBJECT_PREFIX:-k6-rt-preflight}"
+                  export INTAKE_SUBJECT_PREFIX="${INTAKE_SUBJECT_PREFIX:-k6-intake}"
+                  export WORKFLOW_SUBJECT_PREFIX="${WORKFLOW_SUBJECT_PREFIX:-k6-workflow}"
+
+                  # ticket query templates
+                  export TICKETSQL_TEMPLATES="${TICKETSQL_TEMPLATES:-[
+                    \"Queue='Traffic' AND Subject LIKE 'k6-intake%' AND Status!='deleted' ORDER BY LastUpdated DESC\",
+                    \"Queue='Traffic' AND Subject LIKE 'k6-workflow%' AND Status!='deleted' ORDER BY LastUpdated DESC\",
+                    \"Queue='Traffic' AND Subject LIKE 'k6-%' AND Status!='deleted' ORDER BY LastUpdated DESC\"
+                  ]}"
+
+                  # ===== profile overrides =====
+                  apply_low() {
+                    export SLEEP_MIN="2.0" SLEEP_MAX="5.0"
+                    export MIX_VUS_REQUESTERS="1"
+                    export MIX_VUS_STAFFS="1"
+                    export MIX_VUS_CLEANUP="1"
+                    export CLEANUP_ENABLED="true" CLEANUP_START="50m" CLEANUP_DURATION="5m"
+
+                    export W_REQ_BROWSEOWN="75" W_REQ_FOLLOWUP="10" W_REQ_INTAKE="15"
+                    export W_ST_TRIAGE="40" W_ST_NOTES="20" W_ST_UPDATE="20" W_ST_WORKFLOW="10" W_ST_HANDOFF="5" W_ST_LIFECYCLE="5"
+
+                    export TH_ENABLE="true" TH_FAIL_RATE_MAX="0.05" TH_P95_MS_MAX="6000"
+                    export PER_PAGE="20"
+                  }
+
+                  apply_normal() {
+                    export SLEEP_MIN="1.2" SLEEP_MAX="3.5"
+                    export MIX_VUS_REQUESTERS="2"
+                    export MIX_VUS_STAFFS="3"
+                    export MIX_VUS_CLEANUP="1"
+                    export CLEANUP_ENABLED="true" CLEANUP_START="50m" CLEANUP_DURATION="5m"
+
+                    export W_REQ_BROWSEOWN="55" W_REQ_FOLLOWUP="25" W_REQ_INTAKE="20"
+                    export W_ST_TRIAGE="30" W_ST_NOTES="25" W_ST_UPDATE="20" W_ST_WORKFLOW="10" W_ST_HANDOFF="10" W_ST_LIFECYCLE="5"
+
+                    export TH_ENABLE="true" TH_FAIL_RATE_MAX="0.02" TH_P95_MS_MAX="4500"
+                    export PER_PAGE="20"
+                  }
+
+                  apply_peak() {
+                    export SLEEP_MIN="0.8" SLEEP_MAX="2.5"
+                    export MIX_VUS_REQUESTERS="3"
+                    export MIX_VUS_STAFFS="6"
+                    export MIX_VUS_CLEANUP="1"
+                    export CLEANUP_ENABLED="true" CLEANUP_START="50m" CLEANUP_DURATION="5m"
+
+                    export W_REQ_BROWSEOWN="40" W_REQ_FOLLOWUP="30" W_REQ_INTAKE="30"
+                    export W_ST_TRIAGE="25" W_ST_NOTES="25" W_ST_UPDATE="20" W_ST_WORKFLOW="15" W_ST_HANDOFF="10" W_ST_LIFECYCLE="5"
+
+                    export TH_ENABLE="true" TH_FAIL_RATE_MAX="0.03" TH_P95_MS_MAX="5500"
+                    export PER_PAGE="30"
+                  }
+
+                  case "$PROFILE" in
+                    low)    apply_low ;;
+                    normal) apply_normal ;;
+                    peak)   apply_peak ;;
+                    *)      apply_normal ;;
+                  esac
+
+                  run_id="${PROFILE}-${JOB_NAME:-job}-${POD_NAME:-pod}-${ts}"
+                  out="/logs/rt/mixed/${PROFILE}/${day}"
+                  mkdir -p "$out"
+
+                  echo "[runner] hour=${hour} profile=${PROFILE} run_id=${run_id}"
+                  echo "[runner] output=${out}"
+
+                  env | egrep '^(PROFILE|DURATION|SLEEP_|MIX_VUS_|W_REQ_|W_ST_|TH_|BASE_URL|INSECURE_TLS|RT_QUEUE|PER_PAGE|TICKETSQL_TEMPLATES|FOLLOWUP_MODE|LIFECYCLE_MODE|PREFLIGHT_SUBJECT_PREFIX|INTAKE_SUBJECT_PREFIX|WORKFLOW_SUBJECT_PREFIX|CLEANUP_)=' \
+                    > "${out}/env-${run_id}.txt"
+
+                  cd /scripts
+
+                  k6 run ./rt_mix.js \
+                    --tag run_id="${run_id}" \
+                    --tag profile="${PROFILE}" \
+                    --tag hour="${hour}" \
+                    --summary-export "${out}/summary-${run_id}.json" \
+                    2>&1 | tee "${out}/run-${run_id}.log"
+
+              env:
+                - name: LOW_HOURS
+                  value: "00 01 02 03 04 05 06 07 12 21 22 23"
+                - name: PEAK_HOURS
+                  value: "09 10 11 14 15 16 17"
+
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: JOB_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.labels['batch.kubernetes.io/job-name']
+
+                - name: BASE_URL
+                  value: "https://rt.example.com"
+                - name: INSECURE_TLS
+                  value: "true"
+                - name: RT_QUEUE
+                  value: "Traffic"
+
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                  readOnly: true
+                - name: k6-logs
+                  mountPath: /logs
