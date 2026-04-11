@@ -1,0 +1,33 @@
+# cpu-payload-template.spike.configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cpu-payload-template-spike-configmap
+  namespace: chaosblade
+data:
+  cpu-payload.yaml: |
+    apiVersion: chaosblade.io/v1alpha1
+    kind: ChaosBlade
+    metadata:
+      name: __BLADE_NAME__
+      labels:
+        app: chaosblade-cpu-payload
+    spec:
+      experiments:
+        - scope: node
+          target: cpu
+          action: fullload
+          desc: "spike to __CPU_PERCENT__% over __CLIMB_TIME__s"
+          matchers:
+            - name: names
+              value: ["__TARGET_NODE__"]
+            - name: cpu-percent
+              value: ["__CPU_PERCENT__"]
+            - name: climb-time
+              value: ["__CLIMB_TIME__"]
+            - name: timeout
+              value: ["__TIMEOUT__"]
+            - name: cpu-count
+              value: ["__CPU_COUNT__"]
+            - name: cpu-list
+              value: ["__CPU_LIST__"]

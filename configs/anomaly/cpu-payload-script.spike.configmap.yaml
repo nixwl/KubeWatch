@@ -1,0 +1,199 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cpu-payload-script-spike-configmap
+  namespace: chaosblade
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+    RUN_ID="$(date +%Y%m%d%H%M%S)"
+
+    : "${TARGET_NODE:?TARGET_NODE is required}"
+    : "${SPIKE_PERCENT:?SPIKE_PERCENT is required}"
+    : "${SPIKE_RAMP_SECONDS:=1}"
+    : "${SPIKE_MIN_HOLD_SECONDS:=60}"
+    : "${SPIKE_MAX_HOLD_SECONDS:=300}"
+    : "${SPIKE_TIMEOUT_PADDING:=30}"
+    : "${BLADE_NAME:=chaosblade-singlenode-cpu-spike-payload}"
+    : "${CLEANUP:=true}"
+    : "${TIMEOUT:=}"  # New: support the TIMEOUT environment variable
+
+    # logs dir with pvc (default=/logs)
+    : "${LOG_DIR:=/logs}"
+
+    CPU_COUNT="${CPU_COUNT:-}"
+    CPU_LIST="${CPU_LIST:-}"
+
+    # Check the ChaosBlade CRD scope (only once)
+    CHAOSBLADE_SCOPE=$(kubectl get crd chaosblades.chaosblade.io -o jsonpath='{.spec.scope}' 2>/dev/null || echo "Namespaced")
+    echo "ChaosBlade CRD scope: $CHAOSBLADE_SCOPE"
+
+    # Choose the kubectl command based on scope
+    if [[ "$CHAOSBLADE_SCOPE" == "Cluster" ]]; then
+        KUBECTL_CMD="kubectl"
+    else
+        KUBECTL_CMD="kubectl -n ${NS}"
+    fi
+
+    if [ -n "${CPU_COUNT// }" ] && [ -n "${CPU_LIST// }" ]; then
+      echo "ERROR: set only one of CPU_COUNT or CPU_LIST (not both)."
+      exit 1
+    fi
+
+    mkdir -p "${LOG_DIR}"
+    LOG_FILE="${LOG_DIR}/cpu-spike_${TARGET_NODE}_${BLADE_NAME}_${RUN_ID}.log"
+    # out stdout/stderr to logs
+    exec > >(tee -a "${LOG_FILE}") 2>&1
+
+    JSON_FILE="${LOG_FILE%.log}.json"
+    JSON_FIRST=1
+    JSON_CLOSED=0
+    echo "[" > "${JSON_FILE}"
+
+    log() {
+      # UTC timestamp
+      printf '%s [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${RUN_ID}" "$*"
+    }
+
+    json_close() {
+      if [ "${JSON_CLOSED}" -eq 0 ]; then
+        echo "]" >> "${JSON_FILE}"
+        JSON_CLOSED=1
+      fi
+    }
+
+    json_append_object() {
+      local fp="$1"
+      if [ "${JSON_FIRST}" -eq 0 ]; then
+        echo "," >> "${JSON_FILE}"
+      fi
+      cat "${fp}" >> "${JSON_FILE}"
+      JSON_FIRST=0
+    }
+
+    rand_between() {
+      local min="$1" max="$2"
+      local span=$((max - min + 1))
+      echo $(( min + (RANDOM % span) ))
+    }
+
+    cleanup() {
+      json_close || true
+
+      if [ "${CLEANUP}" = "true" ]; then
+        log "cleanup: deleting ${BLADE_NAME} (scope=${CHAOSBLADE_SCOPE})"
+
+        if [[ "$CHAOSBLADE_SCOPE" == "Cluster" ]]; then
+          kubectl delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+        else
+          kubectl -n "${NS}" delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+        fi
+      fi
+    }
+    trap cleanup EXIT INT TERM
+
+    apply_spike() {
+      local HOLD_SECONDS="$1"
+      local TIMEOUT_SECONDS="$2"
+
+      local tmp1 tmp2
+      tmp1="$(mktemp)"
+      tmp2="$(mktemp)"
+
+      sed \
+        -e "s|__BLADE_NAME__|${BLADE_NAME}|g" \
+        -e "s|__TARGET_NODE__|${TARGET_NODE}|g" \
+        -e "s|__CPU_PERCENT__|${SPIKE_PERCENT}|g" \
+        -e "s|__CLIMB_TIME__|${SPIKE_RAMP_SECONDS}|g" \
+        -e "s|__TIMEOUT__|${TIMEOUT_SECONDS}|g" \
+        -e "s|__CPU_COUNT__|${CPU_COUNT}|g" \
+        -e "s|__CPU_LIST__|${CPU_LIST}|g" \
+        /payload/cpu-payload.yaml > "${tmp1}"
+
+      # Remove the corresponding matcher when CPU_COUNT is empty (delete two lines: name + value)
+      if [ -z "${CPU_COUNT// }" ]; then
+        sed '/- name: cpu-count/{N;d;}' "${tmp1}" > "${tmp2}"
+        mv "${tmp2}" "${tmp1}"
+      fi
+
+      # Remove the corresponding matcher when CPU_LIST is empty (delete two lines: name + value)
+      if [ -z "${CPU_LIST// }" ]; then
+        sed '/- name: cpu-list/{N;d;}' "${tmp1}" > "${tmp2}"
+        mv "${tmp2}" "${tmp1}"
+      fi
+
+      log "SPIKE: applying ${SPIKE_PERCENT}% (ramp=${SPIKE_RAMP_SECONDS}s hold=${HOLD_SECONDS}s timeout=${TIMEOUT_SECONDS}s)"
+
+      log "[JSON] kubectl apply output will be appended to: ${JSON_FILE}"
+      local tmpjson tmpjson2
+      tmpjson="$(mktemp)"
+
+      $KUBECTL_CMD apply -f "${tmp1}" -o json > "${tmpjson}"
+
+      json_append_object "${tmpjson}"
+      rm -f "${tmpjson}" || true
+
+      log "SPIKE: effective matchers (from CR spec):"
+      $KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" \
+        -o jsonpath='{range .spec.experiments[0].matchers[*]}{.name}={.value}{"\n"}{end}' \
+        | grep -E '^(cpu-percent|climb-time|timeout|cpu-count|cpu-list)=' || true
+
+      rm -f "${tmp1}" "${tmp2}" || true
+
+      # Wait for the experiment to enter Running state (up to 10s)
+      for j in $(seq 1 10); do
+        STATUS="$($KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
+        if [ "${STATUS}" = "Running" ]; then
+          log "SPIKE: status.phase=Running"
+          break
+        fi
+        sleep 1
+      done
+      
+      tmpjson2="$(mktemp)"
+      $KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" -o json > "${tmpjson2}"
+      json_append_object "${tmpjson2}"
+      rm -f "${tmpjson2}" || true
+    }
+
+    log "=============================================="
+    log "SPIKE MODE"
+    log "ns=${NS}"
+    log "node=${TARGET_NODE}"
+    log "spike=${SPIKE_PERCENT}% ramp=${SPIKE_RAMP_SECONDS}s"
+    log "ChaosBlade CRD scope: ${CHAOSBLADE_SCOPE}"
+    log "log_file=${LOG_FILE}"
+    log "=============================================="
+
+    # Clean up any previously remaining experiment
+    $KUBECTL_CMD delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+    $KUBECTL_CMD wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+
+    # Choose the duration: prefer fixed SPIKE_HOLD_SECONDS, otherwise random MIN..MAX
+    if [ -n "${SPIKE_HOLD_SECONDS:-}" ] && [ -n "${SPIKE_HOLD_SECONDS// }" ]; then
+      HOLD="${SPIKE_HOLD_SECONDS}"
+    else
+      HOLD="$(rand_between "${SPIKE_MIN_HOLD_SECONDS}" "${SPIKE_MAX_HOLD_SECONDS}")"
+    fi
+
+    # Calculate TIMEOUT: if the environment variable is set, use it; otherwise use the original calculation
+    if [ -n "${TIMEOUT}" ]; then
+      TIMEOUT_SECONDS="${TIMEOUT}"
+      log "Using environment variable TIMEOUT: ${TIMEOUT_SECONDS} seconds"
+    else
+      TIMEOUT_SECONDS=$((SPIKE_RAMP_SECONDS + HOLD + SPIKE_TIMEOUT_PADDING))
+      log "Calculated TIMEOUT: ${SPIKE_RAMP_SECONDS}s + ${HOLD}s + ${SPIKE_TIMEOUT_PADDING}s = ${TIMEOUT_SECONDS}s"
+    fi
+
+    apply_spike "${HOLD}" "${TIMEOUT_SECONDS}"
+
+    log "SPIKE: holding ${HOLD}s..."
+    sleep "${HOLD}"
+
+    log "SPIKE: finished; deleting blade now..."
+    cleanup
+
+    log "done"

@@ -1,0 +1,80 @@
+# cpu-payload.pod.ramp.job.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cpu-payload-pod-ramp-job.runner
+  namespace: chaosblade
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cpu-payload-pod-ramp-job.runner
+rules:
+  - apiGroups: ["chaosblade.io"]
+    resources: ["chaosblades"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cpu-payload-pod-ramp-job.runner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cpu-payload-pod-ramp-job.runner
+subjects:
+  - kind: ServiceAccount
+    name: cpu-payload-pod-ramp-job.runner
+    namespace: chaosblade
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: cpu-payload-pod-ramp-job-
+  namespace: chaosblade
+  labels:
+    app: cpu-payload-pod-ramp
+    run_type: manual
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 12000
+  ttlSecondsAfterFinished: 300
+
+  template:
+    metadata:
+      labels:
+        app: cpu-payload-pod-ramp
+        run_type: manual
+    spec:
+      serviceAccountName: cpu-payload-pod-ramp-job.runner
+      restartPolicy: Never
+      containers:
+        - name: runner
+          image: bitnami/kubectl:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: cpu-payload-env-pod-ramp-configmap
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+            - name: payload
+              mountPath: /payload
+            - name: logs
+              mountPath: /logs
+          command: ["/scripts/run.sh"]
+      volumes:
+        - name: script
+          configMap:
+            name: cpu-payload-script-pod-ramp-configmap
+            defaultMode: 0555
+        - name: payload
+          configMap:
+            name: cpu-payload-template-pod-ramp-configmap
+            defaultMode: 0444
+        - name: logs
+          persistentVolumeClaim:
+            claimName: node-logs-pvc

@@ -1,0 +1,244 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: net-payload-script-delay-configmap
+  namespace: chaosblade
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+    RUN_ID="$(date +%Y%m%d%H%M%S)"
+
+    : "${TARGET_NODE:?TARGET_NODE is required}"
+    : "${BLADE_NAME:=chaosblade-singlenode-net-delay-payload}"
+    : "${CLEANUP:=true}"
+    : "${TIMEOUT:=}"  # New: support the TIMEOUT environment variable
+
+    : "${TIME_MS:?TIME_MS is required (ms)}"
+    : "${OFFSET_MS:=0}"
+    : "${INTERFACE:?INTERFACE is required (e.g. eth0/ens33)}"
+
+    : "${LOCAL_PORT:=-}"
+    : "${REMOTE_PORT:=-}"
+    : "${DESTINATION_IP:=-}"
+    : "${EXCLUDE_PORT:=-}"
+    : "${EXCLUDE_IP:=-}"
+
+    : "${FORCE:=false}"
+    : "${IGNORE_PEER_PORT:=false}"
+
+    : "${MIN_HOLD_SECONDS:=600}"
+    : "${MAX_HOLD_SECONDS:=1200}"
+    : "${TIMEOUT_PADDING:=30}"
+
+    : "${LOG_DIR:=/logs}"
+    mkdir -p "${LOG_DIR}"
+
+    # Check the ChaosBlade CRD scope
+    CHAOSBLADE_SCOPE=$(kubectl get crd chaosblades.chaosblade.io -o jsonpath='{.spec.scope}' 2>/dev/null || echo "Namespaced")
+    echo "ChaosBlade CRD scope: $CHAOSBLADE_SCOPE"
+
+    # Choose the kubectl command based on scope
+    if [[ "$CHAOSBLADE_SCOPE" == "Cluster" ]]; then
+        KUBECTL_CMD="kubectl"
+    else
+        KUBECTL_CMD="kubectl -n ${NS}"
+    fi
+
+    LOG_FILE="${LOG_DIR}/net-delay_${TARGET_NODE}_${BLADE_NAME}_${RUN_ID}.log"
+    exec > >(tee -a "${LOG_FILE}") 2>&1
+
+    JSON_FILE="${LOG_FILE%.log}.json"
+    JSON_FIRST=1
+    JSON_CLOSED=0
+    echo "[" > "${JSON_FILE}"
+
+    log() { printf '%s [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${RUN_ID}" "$*"; }
+
+    json_close() {
+      if [ "${JSON_CLOSED}" -eq 0 ]; then
+        echo "]" >> "${JSON_FILE}"
+        JSON_CLOSED=1
+      fi
+    }
+
+    json_append_object() {
+      local fp="$1"
+      if [ "${JSON_FIRST}" -eq 0 ]; then echo "," >> "${JSON_FILE}"; fi
+      cat "${fp}" >> "${JSON_FILE}"
+      JSON_FIRST=0
+    }
+
+    is_uint() { [[ "$1" =~ ^[0-9]+$ ]]; }
+
+    rand_between() {
+      local min="$1" max="$2"
+      local span=$((max - min + 1))
+      echo $(( min + (RANDOM % span) ))
+    }
+
+    cleanup() {
+      json_close || true
+
+      if [ "${CLEANUP}" = "true" ]; then
+        log "cleanup: deleting ${BLADE_NAME} (scope=${CHAOSBLADE_SCOPE})"
+        
+        if [[ "$CHAOSBLADE_SCOPE" == "Cluster" ]]; then
+          kubectl delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+        else
+          kubectl -n "${NS}" delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+        fi
+      fi
+    }
+    trap cleanup EXIT INT TERM
+
+    drop_matcher_block() {
+      local matcher="$1" in="$2" out="$3"
+      awk -v m="$matcher" '
+        $0 ~ "^[[:space:]]*- name: " m "$" {skip=1; next}
+        skip==1 {skip=0; next}
+        {print}
+      ' "$in" > "$out"
+    }
+
+    drop_if_unset() {
+      local var="$1" matcher="$2"
+      local val="${!var:-}"
+      if [ -z "${val}" ] || [ "${val}" = "-" ] || [ "${val}" = "null" ]; then
+        local tmp2
+        tmp2="$(mktemp)"
+        drop_matcher_block "$matcher" "$TMP_MANIFEST" "$tmp2"
+        mv -f "$tmp2" "$TMP_MANIFEST"
+        log "INFO: ${var} is empty/'-'; removed matcher '${matcher}'"
+      fi
+    }
+
+    drop_if_not_true() {
+      local var="$1" matcher="$2"
+      local val="${!var:-false}"
+      if [ "${val}" != "true" ]; then
+        local tmp2
+        tmp2="$(mktemp)"
+        drop_matcher_block "$matcher" "$TMP_MANIFEST" "$tmp2"
+        mv -f "$tmp2" "$TMP_MANIFEST"
+        log "INFO: ${var}!=true; removed matcher '${matcher}'"
+      fi
+    }
+
+    apply_delay() {
+      local HOLD_SECONDS="$1"
+      local TIMEOUT_SECONDS="$2"
+
+      local tmp
+      tmp="$(mktemp)"
+      TMP_MANIFEST="${tmp}"
+
+      sed \
+        -e "s|__BLADE_NAME__|${BLADE_NAME}|g" \
+        -e "s|__TARGET_NODE__|${TARGET_NODE}|g" \
+        -e "s|__INTERFACE__|${INTERFACE}|g" \
+        -e "s|__TIME_MS__|${TIME_MS}|g" \
+        -e "s|__OFFSET_MS__|${OFFSET_MS}|g" \
+        -e "s|__LOCAL_PORT__|${LOCAL_PORT}|g" \
+        -e "s|__REMOTE_PORT__|${REMOTE_PORT}|g" \
+        -e "s|__DESTINATION_IP__|${DESTINATION_IP}|g" \
+        -e "s|__EXCLUDE_PORT__|${EXCLUDE_PORT}|g" \
+        -e "s|__EXCLUDE_IP__|${EXCLUDE_IP}|g" \
+        -e "s|__FORCE__|${FORCE}|g" \
+        -e "s|__IGNORE_PEER_PORT__|${IGNORE_PEER_PORT}|g" \
+        -e "s|__TIMEOUT__|${TIMEOUT_SECONDS}|g" \
+        /payload/net-payload.yaml > "${TMP_MANIFEST}"
+
+      # drop optional matchers if not set
+      drop_if_unset LOCAL_PORT local-port
+      drop_if_unset REMOTE_PORT remote-port
+      drop_if_unset DESTINATION_IP destination-ip
+      drop_if_unset EXCLUDE_PORT exclude-port
+      drop_if_unset EXCLUDE_IP exclude-ip
+
+      drop_if_not_true FORCE force
+      drop_if_not_true IGNORE_PEER_PORT ignore-peer-port
+
+      log "=============================================="
+      log "DELAY MODE (node network delay)"
+      log "ns=${NS}"
+      log "node=${TARGET_NODE}"
+      log "iface=${INTERFACE}"
+      log "time=${TIME_MS}ms offset=${OFFSET_MS}ms"
+      log "hold=${HOLD_SECONDS}s timeout=${TIMEOUT_SECONDS}s"
+      log "ChaosBlade CRD scope: ${CHAOSBLADE_SCOPE}"
+      log "log_file=${LOG_FILE}"
+      log "=============================================="
+
+      # cleanup previous same-name experiment first
+      $KUBECTL_CMD delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+      $KUBECTL_CMD wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+
+      local tmpjson tmpjson2
+      tmpjson="$(mktemp)"
+      $KUBECTL_CMD apply -f "${TMP_MANIFEST}" -o json > "${tmpjson}"
+      json_append_object "${tmpjson}"
+      rm -f "${tmpjson}" || true
+
+      for j in $(seq 1 30); do
+        STATUS="$($KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
+        if [ "${STATUS}" = "Running" ]; then
+          log "status.phase=Running"
+          break
+        fi
+        sleep 1
+      done
+
+      tmpjson2="$(mktemp)"
+      $KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" -o json > "${tmpjson2}"
+      json_append_object "${tmpjson2}"
+      rm -f "${tmpjson2}" || true
+
+      rm -f "${TMP_MANIFEST}" || true
+    }
+
+    # --- sanity checks ---
+    if ! is_uint "${TIME_MS}"; then log "ERROR: TIME_MS must be uint (ms), got '${TIME_MS}'"; exit 2; fi
+    if ! is_uint "${OFFSET_MS}"; then log "ERROR: OFFSET_MS must be uint (ms), got '${OFFSET_MS}'"; exit 2; fi
+    if ! is_uint "${MIN_HOLD_SECONDS}"; then log "ERROR: MIN_HOLD_SECONDS must be uint, got '${MIN_HOLD_SECONDS}'"; exit 2; fi
+    if ! is_uint "${MAX_HOLD_SECONDS}"; then log "ERROR: MAX_HOLD_SECONDS must be uint, got '${MAX_HOLD_SECONDS}'"; exit 2; fi
+    if ! is_uint "${TIMEOUT_PADDING}"; then log "ERROR: TIMEOUT_PADDING must be uint, got '${TIMEOUT_PADDING}'"; exit 2; fi
+    if [ "${MAX_HOLD_SECONDS}" -lt "${MIN_HOLD_SECONDS}" ]; then
+      log "ERROR: MAX_HOLD_SECONDS(${MAX_HOLD_SECONDS}) < MIN_HOLD_SECONDS(${MIN_HOLD_SECONDS})"
+      exit 2
+    fi
+
+    # exclude-port is mutually exclusive with local/remote-port
+    if [ "${EXCLUDE_PORT}" != "-" ] && { [ "${LOCAL_PORT}" != "-" ] || [ "${REMOTE_PORT}" != "-" ]; }; then
+      log "ERROR: EXCLUDE_PORT is set but LOCAL_PORT/REMOTE_PORT also set. They are mutually exclusive."
+      log "       Set EXCLUDE_PORT='-' when using LOCAL_PORT/REMOTE_PORT."
+      exit 2
+    fi
+
+    # choose hold
+    if [ -n "${HOLD_SECONDS:-}" ] && [ -n "${HOLD_SECONDS// }" ]; then
+      if ! is_uint "${HOLD_SECONDS}"; then log "ERROR: HOLD_SECONDS must be uint, got '${HOLD_SECONDS}'"; exit 2; fi
+      HOLD="${HOLD_SECONDS}"
+    else
+      HOLD="$(rand_between "${MIN_HOLD_SECONDS}" "${MAX_HOLD_SECONDS}")"
+    fi
+
+    # Compute TIMEOUT: use the environment variable if set, otherwise fall back to the calculated value
+    if [ -n "${TIMEOUT}" ]; then
+      TIMEOUT_SECONDS="${TIMEOUT}"
+      log "Using TIMEOUT from environment variable: ${TIMEOUT_SECONDS} seconds"
+    else
+      TIMEOUT_SECONDS=$((HOLD + TIMEOUT_PADDING))
+      log "Calculated TIMEOUT: ${HOLD}s + ${TIMEOUT_PADDING}s = ${TIMEOUT_SECONDS}s"
+    fi
+
+    apply_delay "${HOLD}" "${TIMEOUT_SECONDS}"
+
+    log "holding ${HOLD}s..."
+    sleep "${HOLD}"
+
+    log "finished; deleting blade now..."
+    cleanup
+    log "done"

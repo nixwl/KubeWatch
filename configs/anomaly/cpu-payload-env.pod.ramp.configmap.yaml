@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cpu-payload-env-pod-ramp-configmap
+  namespace: chaosblade
+data:
+  TARGET_NS: "default"
+  POD_NAME: "stress-test-54bd654895-4vnwl"
+  CONTAINER_NAME: "busybox"
+
+  BLADE_NAME: "chaosblade-pod-cpu-ramp-payload"
+  CLEANUP: "true"
+
+  HIGH: "90"
+  LOW: "80"
+  RAMP_SECONDS: "15"
+  HOLD_SECONDS: "25"
+  CYCLES: "5"
+
+  CGROUP_ROOT: "/host-sys/fs/cgroup"
+
+  CPU_COUNT: ""
+  CPU_LIST: ""
+  
+  LOG_DIR: "/logs"

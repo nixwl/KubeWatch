@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cpu-payload-pod-ramp-cron-runner
+  namespace: chaosblade
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cpu-payload-pod-ramp-cron-runner
+rules:
+  - apiGroups: ["chaosblade.io"]
+    resources: ["chaosblades"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cpu-payload-pod-ramp-cron-runner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cpu-payload-pod-ramp-cron-runner
+subjects:
+  - kind: ServiceAccount
+    name: cpu-payload-pod-ramp-cron-runner
+    namespace: chaosblade
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cpu-payload-pod-ramp-cron
+  namespace: chaosblade
+spec:
+  schedule: "*/20 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 12000
+      ttlSecondsAfterFinished: 300
+      template:
+        spec:
+          serviceAccountName: cpu-payload-pod-ramp-cron-runner
+          restartPolicy: Never
+          containers:
+            - name: runner
+              image: bitnami/kubectl:latest
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - configMapRef:
+                    name: cpu-payload-env-pod-ramp-configmap
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+                - name: payload
+                  mountPath: /payload
+                - name: logs
+                  mountPath: /logs
+              command: ["/scripts/run.sh"]
+          volumes:
+            - name: script
+              configMap:
+                name: cpu-payload-script-pod-ramp-configmap
+                defaultMode: 0555
+            - name: payload
+              configMap:
+                name: cpu-payload-template-pod-ramp-configmap
+                defaultMode: 0444
+            - name: logs
+              persistentVolumeClaim:
+                claimName: node-logs-pvc

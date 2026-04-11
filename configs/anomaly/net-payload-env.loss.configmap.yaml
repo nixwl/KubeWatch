@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: net-payload-env-loss-configmap
+  namespace: chaosblade
+data:
+  TARGET_NODE: "emanage1"
+  BLADE_NAME: "chaosblade-singlenode-net-loss-payload"
+  CLEANUP: "true"
+
+  # loss percent: [0,100] integer
+  PERCENT: "10"
+
+  # interface on the node
+  INTERFACE: "ens33"
+
+  # optional filters (empty/'-' means: not set; script will remove the matcher)
+  LOCAL_PORT: "-"
+  REMOTE_PORT: "-"
+  DESTINATION_IP: "-"
+  EXCLUDE_IP: "-"
+  # Reminder: exclude-port cannot be used together with local-port/remote-port
+  EXCLUDE_PORT: "22"
+
+  # optional flags
+  FORCE: "false"
+  IGNORE_PEER_PORT: "false"
+
+  # runtime control
+  MIN_HOLD_SECONDS: "600"
+  MAX_HOLD_SECONDS: "1200"
+  # HOLD_SECONDS: "900"
+  TIMEOUT_PADDING: "30"
+
+  # logs dir with pvc (default=/logs)
+  LOG_DIR: "/logs"

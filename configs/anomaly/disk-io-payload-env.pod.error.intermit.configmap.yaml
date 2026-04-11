@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disk-io-payload-env-pod-error-intermit-configmap
+  namespace: chaosblade
+data:
+  TARGET_NS: "default"
+  POD_NAME: "stress-test-865d7b6b9c-crfx9"
+  # POD_LABELS: "app=stress-test"   # Optional: enable this when not using POD_NAME (supported by the script)
+
+  BLADE_NAME: "chaosblade-pod-io-error-intermit-payload"
+  CLEANUP: "true"
+
+  # Fixed error (persistent failure within the failure window)
+  IO_METHOD: "read" # read / write / open / fsync / rename ...
+  IO_ERRNO: "5" # 5=I/O error; 28=No space left on device also works
+  IO_PERCENT: "100" # Hit ratio within the failure window (100 = persistent failure)
+
+  IO_PATH: "/data/conf" # Must be within the injected directory (e.g. /data/conf)
+
+  # === Intermittent parameters ===
+  IO_FAIL_MIN_HOLD_SECONDS: "30"
+  IO_FAIL_MAX_HOLD_SECONDS: "120"
+  # IO_FAIL_HOLD_SECONDS: "60"     # Optional: fixed failure window (higher priority)
+
+  IO_RECOVER_MIN_SECONDS: "30"
+  IO_RECOVER_MAX_SECONDS: "180"
+  # IO_RECOVER_SECONDS: "120"      # Optional: fixed recovery window (higher priority)
+
+  # Termination condition (choose one)
+  IO_TOTAL_SECONDS: "600" # Total runtime (recommended; stop when it is reached)
+  # IO_CYCLES: "10"              # Or run by cycle count (if unset, use IO_TOTAL_SECONDS)
+
+  IO_TIMEOUT_PADDING: "30" # For internal script use only (logging/safety margin)
+
+  # Optional selectors (leave empty if unused)
+  EVICT_COUNT: ""
+  EVICT_PERCENT: ""
+  WAITING_TIME: "" # e.g. 20s
+
+  LOG_DIR: "/logs"
+
+  # === Optional: automatically generate I/O within the injection window so it is visible ===
+  IO_GEN_ENABLE: "false" # true/false
+  IO_GEN_MODE: "mixed" # read | write | mixed (mixed is recommended)
+  IO_GEN_INTERVAL_MS: "200" # Interval between each I/O operation
+  IO_GEN_FILE_KB: "64" # Read/write size per operation (KB)
+  IO_GEN_CONTAINER: "" # Optional: specify the business container name; empty = default container
+  IO_GEN_FILENAME: "seed.bin" # Filename used for read operations

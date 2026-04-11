@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: net-payload-env-pod-loss-configmap
+  namespace: chaosblade
+data:
+  TARGET_NS: "default"
+  POD_NAME: "stress-test-54bd654895-4vnwl"
+
+  POD_LABELS: "-"          # e.g. "app=stress-test"
+  EVICT_COUNT: "-"         # e.g. "1"
+  EVICT_PERCENT: "-"       # e.g. "50"
+  WAITING_TIME: "-"        # e.g. "20s" "1m" (default 20s)
+
+  BLADE_NAME: "chaosblade-pod-net-loss-payload"
+  CLEANUP: "true"
+
+  # loss params
+  LOSS_PERCENT: "30"        # 0-100
+  # IMPORTANT: pod netns interface usually "eth0"
+  INTERFACE: "eth0"
+
+  # optional filters
+  LOSS_LOCAL_PORT: "-"
+  LOSS_REMOTE_PORT: "-"
+  LOSS_DESTINATION_IP: "-"
+  LOSS_EXCLUDE_IP: "-"
+  LOSS_EXCLUDE_PORT: "-"
+
+  # optional flags
+  LOSS_FORCE: "false"
+  LOSS_IGNORE_PEER_PORT: "false"
+
+  # runtime control
+  LOSS_MIN_HOLD_SECONDS: "600"
+  LOSS_MAX_HOLD_SECONDS: "1200"
+  # LOSS_HOLD_SECONDS: "3000"
+  LOSS_TIMEOUT_PADDING: "30"
+  LOG_DIR: "/logs"

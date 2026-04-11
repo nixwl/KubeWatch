@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: disk-payload-fill-job-runner
+  namespace: chaosblade
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: disk-payload-fill-job-runner
+rules:
+  - apiGroups: ["chaosblade.io"]
+    resources: ["chaosblades"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: disk-payload-fill-job-runner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: disk-payload-fill-job-runner
+subjects:
+  - kind: ServiceAccount
+    name: disk-payload-fill-job-runner
+    namespace: chaosblade
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: disk-payload-fill-job-
+  namespace: chaosblade
+  labels:
+    app: disk-payload-fill
+    run_type: manual
+spec:
+  backoffLimit: 0
+  # >= MAX_HOLD_SECONDS + TIMEOUT_PADDING + 120
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 300
+
+  template:
+    metadata:
+      labels:
+        app: disk-payload-fill
+        run_type: manual
+    spec:
+      serviceAccountName: disk-payload-fill-job-runner
+      restartPolicy: Never
+      containers:
+        - name: runner
+          image: bitnami/kubectl
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: disk-payload-env-fill-configmap
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+            - name: payload
+              mountPath: /payload
+            - name: logs
+              mountPath: /logs
+          command: ["/scripts/run.sh"]
+      volumes:
+        - name: script
+          configMap:
+            name: disk-payload-script-fill-configmap
+            defaultMode: 0555
+        - name: payload
+          configMap:
+            name: disk-payload-template-fill-configmap
+            defaultMode: 0444
+        - name: logs
+          persistentVolumeClaim:
+            claimName: node-logs-pvc

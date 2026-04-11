@@ -1,0 +1,190 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cpu-payload-script-pod-spike-configmap
+  namespace: chaosblade
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+    RUN_ID="$(date +%Y%m%d%H%M%S)"
+
+    : "${TARGET_NS:?TARGET_NS is required}"
+    : "${POD_NAME:?POD_NAME is required}"
+    : "${CONTAINER_NAME:?CONTAINER_NAME is required}"
+
+    : "${SPIKE_PERCENT:?SPIKE_PERCENT is required}"
+    : "${SPIKE_RAMP_SECONDS:=1}"
+    : "${SPIKE_MIN_HOLD_SECONDS:=60}"
+    : "${SPIKE_MAX_HOLD_SECONDS:=300}"
+    : "${SPIKE_TIMEOUT_PADDING:=30}"
+
+    : "${BLADE_NAME:=chaosblade-pod-cpu-spike-payload}"
+    : "${CLEANUP:=true}"
+    : "${LOG_DIR:=/logs}"
+
+    : "${CGROUP_ROOT:=/host-sys/fs/cgroup}"
+
+    CPU_COUNT="${CPU_COUNT:-}"
+    CPU_LIST="${CPU_LIST:-}"
+
+    if [ -n "${CPU_COUNT// }" ] && [ -n "${CPU_LIST// }" ]; then
+      echo "ERROR: set only one of CPU_COUNT or CPU_LIST (not both)."
+      exit 1
+    fi
+
+     mkdir -p "${LOG_DIR}"
+    LOG_FILE="${LOG_DIR}/pod-cpu-spike_${TARGET_NS}_${POD_NAME}_${CONTAINER_NAME}_${BLADE_NAME}_${RUN_ID}.log"
+    exec > >(tee -a "${LOG_FILE}") 2>&1
+
+    JSON_FILE="${LOG_FILE%.log}.json"
+    JSON_FIRST=1
+    JSON_CLOSED=0
+    echo "[" > "${JSON_FILE}"
+
+    log() { printf '%s [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${RUN_ID}" "$*"; }
+
+    json_close() {
+      if [ "${JSON_CLOSED}" -eq 0 ]; then
+        echo "]" >> "${JSON_FILE}"
+        JSON_CLOSED=1
+      fi
+    }
+
+    json_append_object() {
+      local fp="$1"
+      if [ "${JSON_FIRST}" -eq 0 ]; then echo "," >> "${JSON_FILE}"; fi
+      cat "${fp}" >> "${JSON_FILE}"
+      JSON_FIRST=0
+    }
+
+    rand_between() {
+      local min="$1" max="$2"
+      local span=$((max - min + 1))
+      echo $(( min + (RANDOM % span) ))
+    }
+
+    cleanup() {
+      json_close || true
+      if [ "${CLEANUP}" = "true" ]; then
+        log "cleanup: deleting chaosblade ${BLADE_NAME}"
+        kubectl -n "${NS}" delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+        kubectl -n "${NS}" wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+      fi
+    }
+    trap cleanup EXIT INT TERM
+
+    validate_target_container() {
+      log "validating target: ns=${TARGET_NS} pod=${POD_NAME} container=${CONTAINER_NAME}"
+
+      # Verify the Pod exists
+      if ! kubectl -n "${TARGET_NS}" get pod "${POD_NAME}" >/dev/null 2>&1; then
+        log "ERROR: pod not found: ${TARGET_NS}/${POD_NAME}"
+        exit 1
+      fi
+
+      # Verify the container name exists in the Pod spec
+      if ! kubectl -n "${TARGET_NS}" get pod "${POD_NAME}" \
+          -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' \
+          | grep -Fxq "${CONTAINER_NAME}"; then
+        log "ERROR: container name not found in pod spec: ${CONTAINER_NAME}"
+        log "HINT: containers in pod are:"
+        kubectl -n "${TARGET_NS}" get pod "${POD_NAME}" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' || true
+        exit 1
+      fi
+
+      log "validation OK"
+    }
+
+    apply_spike() {
+      local HOLD_SECONDS="$1"
+      local TIMEOUT_SECONDS="$2"
+
+      local tmp1 tmp2
+      tmp1="$(mktemp)"
+      tmp2="$(mktemp)"
+
+      sed \
+        -e "s|__BLADE_NAME__|${BLADE_NAME}|g" \
+        -e "s|__TARGET_NS__|${TARGET_NS}|g" \
+        -e "s|__POD_NAME__|${POD_NAME}|g" \
+        -e "s|__CONTAINER_NAME__|${CONTAINER_NAME}|g" \
+        -e "s|__CPU_PERCENT__|${SPIKE_PERCENT}|g" \
+        -e "s|__CLIMB_TIME__|${SPIKE_RAMP_SECONDS}|g" \
+        -e "s|__TIMEOUT__|${TIMEOUT_SECONDS}|g" \
+        -e "s|__CGROUP_ROOT__|${CGROUP_ROOT}|g" \
+        -e "s|__CPU_COUNT__|${CPU_COUNT}|g" \
+        -e "s|__CPU_LIST__|${CPU_LIST}|g" \
+        /payload/cpu-payload.yaml > "${tmp1}"
+
+      # remove empty optional matchers (each matcher block is 2 lines: name + value)
+      if [ -z "${CPU_COUNT// }" ]; then
+        sed '/- name: cpu-count/{N;d;}' "${tmp1}" > "${tmp2}" && mv "${tmp2}" "${tmp1}"
+      fi
+      if [ -z "${CPU_LIST// }" ]; then
+        sed '/- name: cpu-list/{N;d;}' "${tmp1}" > "${tmp2}" && mv "${tmp2}" "${tmp1}"
+      fi
+
+      log "SPIKE: applying container cpu=${SPIKE_PERCENT}% ramp=${SPIKE_RAMP_SECONDS}s hold=${HOLD_SECONDS}s timeout=${TIMEOUT_SECONDS}s"
+      log "SPIKE: rendered manifest (first 160 lines):"
+      nl -ba "${tmp1}" | sed -n '1,160p'
+
+      log "[JSON] kubectl apply output -> ${JSON_FILE}"
+      local tmpjson tmpjson2
+      tmpjson="$(mktemp)"
+      kubectl -n "${NS}" apply -f "${tmp1}" -o json > "${tmpjson}"
+      json_append_object "${tmpjson}"
+      rm -f "${tmpjson}" || true
+
+      for j in $(seq 1 10); do
+        STATUS="$(kubectl -n "${NS}" get chaosblades.chaosblade.io "${BLADE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
+        if [ "${STATUS}" = "Running" ]; then
+          log "SPIKE: status.phase=Running"
+          break
+        fi
+        sleep 1
+      done
+
+      tmpjson2="$(mktemp)"
+      kubectl -n "${NS}" get chaosblades.chaosblade.io "${BLADE_NAME}" -o json > "${tmpjson2}"
+      json_append_object "${tmpjson2}"
+      rm -f "${tmpjson2}" || true
+
+      rm -f "${tmp1}" "${tmp2}" || true
+    }
+
+    log "=============================================="
+    log "CONTAINER CPU SPIKE MODE (k8s yaml via CRD)"
+    log "runner_ns=${NS}"
+    log "target_pod=${TARGET_NS}/${POD_NAME}"
+    log "target_container=${CONTAINER_NAME}"
+    log "spike=${SPIKE_PERCENT}% ramp=${SPIKE_RAMP_SECONDS}s"
+    log "cgroup_root=${CGROUP_ROOT}"
+    log "log_file=${LOG_FILE}"
+    log "=============================================="
+
+    # Clean up leftovers (avoid name collisions)
+    kubectl -n "${NS}" delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+    kubectl -n "${NS}" wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+
+    validate_target_container
+
+    if [ -n "${SPIKE_HOLD_SECONDS:-}" ] && [ -n "${SPIKE_HOLD_SECONDS// }" ]; then
+      HOLD="${SPIKE_HOLD_SECONDS}"
+    else
+      HOLD="$(rand_between "${SPIKE_MIN_HOLD_SECONDS}" "${SPIKE_MAX_HOLD_SECONDS}")"
+    fi
+
+    TIMEOUT=$((SPIKE_RAMP_SECONDS + HOLD + SPIKE_TIMEOUT_PADDING))
+
+    apply_spike "${HOLD}" "${TIMEOUT}"
+
+    log "SPIKE: holding ${HOLD}s..."
+    sleep "${HOLD}"
+
+    log "SPIKE: finished; deleting blade now..."
+    cleanup
+
+    log "done"

@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disk-payload-env-burn-configmap
+  namespace: chaosblade
+data:
+  TARGET_NODE: "emanage1"
+  BLADE_NAME: "chaosblade-singlenode-disk-burn-payload"
+  CLEANUP: "true"
+
+  # target path on the node filesystem (DO NOT use env var named PATH!)
+  DISK_PATH: "/var/lib/rancher"
+
+  # enable at least one of READ/WRITE
+  READ: "true"
+  WRITE: "true"
+
+  # io block size (integer). Start with 10-50; increase if the load is too low
+  SIZE: "20"
+
+  # runtime control
+  MIN_HOLD_SECONDS: "900"
+  MAX_HOLD_SECONDS: "1800"
+  # HOLD_SECONDS: "1800"
+  TIMEOUT_PADDING: "30"
+
+  # logs dir with pvc (default=/logs)
+  LOG_DIR: "/logs"

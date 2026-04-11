@@ -1,0 +1,24 @@
+# cpu-payload-env.pod-spike.configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cpu-payload-env-pod-spike-configmap
+  namespace: chaosblade
+data:
+  TARGET_NS: "default"
+  POD_NAME: "stress-test-54bd654895-4vnwl"
+  CONTAINER_NAME: "busybox"
+  
+  BLADE_NAME: "chaosblade-pod-cpu-spike-payload"
+  CLEANUP: "true"
+  
+  SPIKE_PERCENT: "90"
+  SPIKE_RAMP_SECONDS: "5"
+  SPIKE_MIN_HOLD_SECONDS: "120"
+  SPIKE_MAX_HOLD_SECONDS: "300"
+  SPIKE_TIMEOUT_PADDING: "30"
+  # SPIKE_HOLD_SECONDS: "180"
+  CGROUP_ROOT: "/host-sys/fs/cgroup"
+  CPU_COUNT: ""
+  CPU_LIST: ""
+  LOG_DIR: "/logs"

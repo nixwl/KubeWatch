@@ -1,0 +1,23 @@
+# cpu-payload-env.spike.configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cpu-payload-env-spike-configmap
+  namespace: chaosblade
+data:
+  TARGET_NODE: "emanage1"
+  BLADE_NAME: "chaosblade-singlenode-cpu-spike-payload"
+  CLEANUP: "true"
+  # Spike: rapidly surge to 90%
+  SPIKE_PERCENT: "90"
+  # 0~1 is closer to "instantaneous"
+  SPIKE_RAMP_SECONDS: "5"
+  # Duration: random 2–5 minutes (in seconds)
+  SPIKE_MIN_HOLD_SECONDS: "120"
+  SPIKE_MAX_HOLD_SECONDS: "300"
+  # Extra timeout buffer (seconds)
+  SPIKE_TIMEOUT_PADDING: "30"
+  # Fixed duration (seconds); uncomment to enable. MIN/MAX are ignored when enabled.
+  # SPIKE_HOLD_SECONDS: "180"
+  CPU_COUNT: ""
+  CPU_LIST: ""

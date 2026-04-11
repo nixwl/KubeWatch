@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: net-payload-env-pod-delay-configmap
+  namespace: chaosblade
+data:
+  TARGET_NS: "default"
+  POD_NAME: "stress-test-54bd654895-4vnwl"
+
+  POD_LABELS: "-"          # e.g. "app=stress-test"
+  EVICT_COUNT: "-"         # e.g. "1"
+  EVICT_PERCENT: "-"       # e.g. "50"
+  WAITING_TIME: "-"        # e.g. "20s" "1m" (default 20s)
+
+  BLADE_NAME: "chaosblade-pod-net-delay-payload"
+  CLEANUP: "true"
+
+  # delay params (ms)
+  DELAY_TIME_MS: "150"
+  DELAY_OFFSET_MS: "50"
+  # IMPORTANT: pod netns interface usually "eth0"
+  INTERFACE: "eth0"
+
+  # optional filters
+  DELAY_LOCAL_PORT: "-"
+  DELAY_REMOTE_PORT: "-"
+  DELAY_DESTINATION_IP: "-"
+  DELAY_EXCLUDE_IP: "-"
+  DELAY_EXCLUDE_PORT: "-"
+
+  # optional flags
+  DELAY_FORCE: "false"
+  DELAY_IGNORE_PEER_PORT: "false"
+
+  # runtime control
+  DELAY_MIN_HOLD_SECONDS: "600"
+  DELAY_MAX_HOLD_SECONDS: "1200"
+  # DELAY_HOLD_SECONDS: "3000"
+  DELAY_TIMEOUT_PADDING: "30"
+  LOG_DIR: "/logs"

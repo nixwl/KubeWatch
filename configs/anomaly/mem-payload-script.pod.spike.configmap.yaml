@@ -1,0 +1,284 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mem-payload-script-pod-spike-configmap
+  namespace: chaosblade
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+    RUN_ID="$(date +%Y%m%d%H%M%S)"
+
+    : "${TARGET_NS:?TARGET_NS is required}"
+    : "${POD_NAME:?POD_NAME is required}"
+    : "${CONTAINER_NAME:=}"  # Optional; if provided, validate it first, otherwise fall back to the first container
+
+    : "${SPIKE_PERCENT:?SPIKE_PERCENT is required}"
+    : "${SPIKE_RAMP_SECONDS:=1}"
+    : "${SPIKE_MIN_HOLD_SECONDS:=30}"
+    : "${SPIKE_MAX_HOLD_SECONDS:=90}"
+    : "${SPIKE_TIMEOUT_PADDING:=30}"
+    : "${TIMEOUT:=}"  # Optional: manually override timeout (seconds)
+
+    : "${MAX_MEM_PERCENT:=90}"
+    : "${MEM_MODE:=ram}"
+    : "${MEM_RATE:=}"                      # optional, MB/s (ram only)
+    : "${CGROUP_ROOT:=/host-sys/fs/cgroup}" # optional
+
+    : "${BLADE_NAME:=chaosblade-pod-mem-spike-payload}"
+    : "${CLEANUP:=true}"
+    : "${LOG_DIR:=/logs}"
+
+    normalize_opt() {
+      local v="${1:-}"
+      v="$(printf '%s' "$v" | tr -d '[:space:]')"
+      if [ -z "$v" ] || [ "$v" = "-" ]; then
+        echo ""
+      else
+        echo "$v"
+      fi
+    }
+    MEM_RATE="$(normalize_opt "${MEM_RATE}")"
+    CGROUP_ROOT="$(printf '%s' "${CGROUP_ROOT:-}" | tr -d '[:space:]')" || true
+
+    # ---- CRD scope (aligned with mem-high) ----
+    CHAOSBLADE_SCOPE="$(kubectl get crd chaosblades.chaosblade.io -o jsonpath='{.spec.scope}' 2>/dev/null || echo "Cluster")"
+    echo "ChaosBlade CRD scope: $CHAOSBLADE_SCOPE"
+
+    if [[ "$CHAOSBLADE_SCOPE" == "Cluster" ]]; then
+      KUBECTL_CMD="kubectl"
+    else
+      KUBECTL_CMD="kubectl -n ${NS}"
+    fi
+
+    mkdir -p "${LOG_DIR}"
+    CN_FOR_LOG="${CONTAINER_NAME:-auto}"
+    LOG_FILE="${LOG_DIR}/pod-mem-spike_${TARGET_NS}_${POD_NAME}_${CN_FOR_LOG}_${BLADE_NAME}_${RUN_ID}.log"
+    exec > >(tee -a "${LOG_FILE}") 2>&1
+
+    JSON_FILE="${LOG_FILE%.log}.json"
+    JSON_FIRST=1
+    JSON_CLOSED=0
+    echo "[" > "${JSON_FILE}"
+
+    log() { printf '%s [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${RUN_ID}" "$*"; }
+
+    json_close() {
+      if [ "${JSON_CLOSED}" -eq 0 ]; then
+        echo "]" >> "${JSON_FILE}"
+        JSON_CLOSED=1
+      fi
+    }
+
+    json_append_object() {
+      local fp="$1"
+      if [ "${JSON_FIRST}" -eq 0 ]; then echo "," >> "${JSON_FILE}"; fi
+      cat "${fp}" >> "${JSON_FILE}"
+      JSON_FIRST=0
+    }
+
+    rand_between() {
+      local min="$1" max="$2"
+      local span=$((max - min + 1))
+      echo $(( min + (RANDOM % span) ))
+    }
+
+    cleanup() {
+      json_close || true
+      if [ "${CLEANUP}" = "true" ]; then
+        log "cleanup: deleting chaosblade ${BLADE_NAME} (scope=${CHAOSBLADE_SCOPE})"
+        $KUBECTL_CMD delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+        $KUBECTL_CMD wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+      fi
+    }
+    trap cleanup EXIT INT TERM
+
+    # ---------- helpers ----------
+    parse_mem_to_mb() {
+      local cap="$1"
+      if [[ "$cap" =~ ^([0-9]+)Ki$ ]]; then
+        echo $(( ${BASH_REMATCH[1]} / 1024 ))
+      elif [[ "$cap" =~ ^([0-9]+)Mi$ ]]; then
+        echo $(( ${BASH_REMATCH[1]} ))
+      elif [[ "$cap" =~ ^([0-9]+)Gi$ ]]; then
+        echo $(( ${BASH_REMATCH[1]} * 1024 ))
+      elif [[ "$cap" =~ ^([0-9]+)Ti$ ]]; then
+        echo $(( ${BASH_REMATCH[1]} * 1024 * 1024 ))
+      else
+        echo 0
+      fi
+    }
+
+    ceil_div() {
+      local a="$1" b="$2"
+      if [ "$b" -le 0 ]; then echo 0; return; fi
+      echo $(( (a + b - 1) / b ))
+    }
+
+    clamp_percent() {
+      local p="$1"
+      if [ "$p" -gt "${MAX_MEM_PERCENT}" ]; then
+        log "WARN: SPIKE_PERCENT=${p} > MAX_MEM_PERCENT=${MAX_MEM_PERCENT}, clamp to ${MAX_MEM_PERCENT}"
+        echo "${MAX_MEM_PERCENT}"
+      else
+        echo "$p"
+      fi
+    }
+
+    validate_target_container() {
+      log "validating target: ${TARGET_NS}/${POD_NAME} container=${CONTAINER_NAME:-<auto>}"
+
+      kubectl -n "${TARGET_NS}" get pod "${POD_NAME}" >/dev/null 2>&1 \
+        || { log "ERROR: pod not found: ${TARGET_NS}/${POD_NAME}"; exit 1; }
+
+      # 1) If a container name is explicitly provided, validate it first
+      if [ -n "${CONTAINER_NAME// }" ]; then
+        if kubectl -n "${TARGET_NS}" get pod "${POD_NAME}" \
+            -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' \
+            | grep -Fxq "${CONTAINER_NAME}"; then
+          log "validation OK (explicit container exists): ${CONTAINER_NAME}"
+          return 0
+        fi
+
+        log "WARN: explicit container not found in pod spec: ${CONTAINER_NAME}"
+        log "HINT: containers in pod are:"
+        kubectl -n "${TARGET_NS}" get pod "${POD_NAME}" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' || true
+      fi
+
+      # 2) Fallback: use the first container
+      local first=""
+      first="$(kubectl -n "${TARGET_NS}" get pod "${POD_NAME}" -o jsonpath='{.spec.containers[0].name}' 2>/dev/null || true)"
+      [ -n "${first// }" ] || { log "ERROR: cannot determine first container from pod spec"; exit 1; }
+
+      CONTAINER_NAME="${first}"
+      log "WARN: fallback to first container: ${CONTAINER_NAME}"
+      log "validation OK (fallback container): ${CONTAINER_NAME}"
+    }
+
+    get_container_mem_limit_mb() {
+      local lim=""
+      lim="$(kubectl -n "${TARGET_NS}" get pod "${POD_NAME}" \
+        -o jsonpath="{.spec.containers[?(@.name=='${CONTAINER_NAME}')].resources.limits.memory}" 2>/dev/null || true)"
+      parse_mem_to_mb "${lim}"
+    }
+
+    remove_matcher_block() {
+      local key="$1" file="$2"
+      sed "/- name: ${key}/{N;d;}" "${file}" > "${file}.tmp" && mv "${file}.tmp" "${file}"
+    }
+
+    apply_spike() {
+      local HOLD_SECONDS="$1"
+      local TIMEOUT_SECONDS="$2"
+      local tmp
+      tmp="$(mktemp)"
+
+      local percent rate_mb limit_mb target_mb
+      percent="$(clamp_percent "${SPIKE_PERCENT}")"
+
+      if [ "${SPIKE_RAMP_SECONDS}" -lt 1 ]; then
+        log "WARN: SPIKE_RAMP_SECONDS=${SPIKE_RAMP_SECONDS} invalid, set to 1"
+        SPIKE_RAMP_SECONDS=1
+      fi
+
+      rate_mb=""
+      if [ "${MEM_MODE}" = "ram" ]; then
+        if [ -n "${MEM_RATE}" ]; then
+          rate_mb="${MEM_RATE}"
+        else
+          limit_mb="$(get_container_mem_limit_mb)"
+          if [ "${limit_mb}" -gt 0 ]; then
+            target_mb=$(( limit_mb * percent / 100 ))
+            rate_mb="$(ceil_div "${target_mb}" "${SPIKE_RAMP_SECONDS}")"
+            [ "${rate_mb}" -lt 1 ] && rate_mb=1
+            log "rate auto: limit=${limit_mb}MB target=${target_mb}MB ramp=${SPIKE_RAMP_SECONDS}s => rate=${rate_mb}MB/s"
+          else
+            rate_mb="1024"
+            log "WARN: container has no memory limit; fallback rate=${rate_mb}MB/s"
+          fi
+        fi
+      fi
+
+      sed \
+        -e "s|__BLADE_NAME__|${BLADE_NAME}|g" \
+        -e "s|__TARGET_NS__|${TARGET_NS}|g" \
+        -e "s|__POD_NAME__|${POD_NAME}|g" \
+        -e "s|__CONTAINER_NAME__|${CONTAINER_NAME}|g" \
+        -e "s|__MEM_PERCENT__|${percent}|g" \
+        -e "s|__MEM_MODE__|${MEM_MODE}|g" \
+        -e "s|__MEM_RATE__|${rate_mb}|g" \
+        -e "s|__RAMP_SECONDS__|${SPIKE_RAMP_SECONDS}|g" \
+        -e "s|__TIMEOUT__|${TIMEOUT_SECONDS}|g" \
+        -e "s|__CGROUP_ROOT__|${CGROUP_ROOT}|g" \
+        /payload/mem-payload.yaml > "${tmp}"
+
+      if [ -z "${rate_mb// }" ]; then remove_matcher_block "rate" "${tmp}"; fi
+      if [ -z "${CGROUP_ROOT// }" ]; then remove_matcher_block "cgroup-root" "${tmp}"; fi
+
+      log "SPIKE: applying mem percent=${percent}% mode=${MEM_MODE} rate='${rate_mb}' ramp=${SPIKE_RAMP_SECONDS}s hold=${HOLD_SECONDS}s timeout=${TIMEOUT_SECONDS}s"
+      log "SPIKE: rendered manifest (first 200 lines):"
+      nl -ba "${tmp}" | sed -n '1,200p'
+
+      $KUBECTL_CMD delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+      $KUBECTL_CMD wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+
+      local tmpjson tmpjson2
+      tmpjson="$(mktemp)"
+      $KUBECTL_CMD apply -f "${tmp}" -o json > "${tmpjson}"
+      json_append_object "${tmpjson}"
+      rm -f "${tmpjson}" || true
+
+      for j in $(seq 1 10); do
+        STATUS="$($KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
+        [ "${STATUS}" = "Running" ] && { log "SPIKE: status.phase=Running"; break; }
+        sleep 1
+      done
+
+      tmpjson2="$(mktemp)"
+      $KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" -o json > "${tmpjson2}"
+      json_append_object "${tmpjson2}"
+      rm -f "${tmpjson2}" || true
+
+      rm -f "${tmp}" || true
+    }
+
+    SPIKE_PERCENT="$(clamp_percent "${SPIKE_PERCENT}")"
+
+    log "=============================================="
+    log "POD CONTAINER MEM SPIKE MODE (k8s yaml via CRD)"
+    log "runner_ns=${NS}"
+    log "target=${TARGET_NS}/${POD_NAME} container=${CONTAINER_NAME:-<auto>}"
+    log "spike=${SPIKE_PERCENT}% ramp=${SPIKE_RAMP_SECONDS}s"
+    log "mode=${MEM_MODE} mem_rate_override='${MEM_RATE}'"
+    log "ChaosBlade CRD scope: ${CHAOSBLADE_SCOPE}"
+    log "cgroup_root='${CGROUP_ROOT}'"
+    log "log_file=${LOG_FILE}"
+    log "=============================================="
+
+    validate_target_container
+
+    if [ -n "${SPIKE_HOLD_SECONDS:-}" ] && [ -n "${SPIKE_HOLD_SECONDS// }" ]; then
+      HOLD="${SPIKE_HOLD_SECONDS}"
+    else
+      HOLD="$(rand_between "${SPIKE_MIN_HOLD_SECONDS}" "${SPIKE_MAX_HOLD_SECONDS}")"
+    fi
+
+    if [ -n "${TIMEOUT// }" ]; then
+      TIMEOUT_SECONDS="${TIMEOUT}"
+      log "use TIMEOUT env: ${TIMEOUT_SECONDS}s"
+    else
+      TIMEOUT_SECONDS=$((SPIKE_RAMP_SECONDS + HOLD + SPIKE_TIMEOUT_PADDING))
+      log "calc TIMEOUT: ${SPIKE_RAMP_SECONDS}s + ${HOLD}s + ${SPIKE_TIMEOUT_PADDING}s = ${TIMEOUT_SECONDS}s"
+    fi
+
+    apply_spike "${HOLD}" "${TIMEOUT_SECONDS}"
+
+    log "SPIKE: holding ${HOLD}s..."
+    sleep "${HOLD}"
+
+    log "SPIKE: finished; deleting blade now..."
+    cleanup
+
+    log "done"

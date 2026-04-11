@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: net-payload-template-pod-loss-configmap
+  namespace: chaosblade
+data:
+  net-payload.yaml: |
+    apiVersion: chaosblade.io/v1alpha1
+    kind: ChaosBlade
+    metadata:
+      name: __BLADE_NAME__
+      labels:
+        app: chaosblade-pod-net-loss-payload
+    spec:
+      experiments:
+        - scope: pod
+          target: network
+          action: loss
+          desc: "pod-net LOSS pod=__TARGET_NS__/__POD_NAME__ percent=__PERCENT__% iface=__INTERFACE__"
+          matchers:
+            # k8s selectors
+            - name: namespace
+              value: ["__TARGET_NS__"]
+            - name: names
+              value: ["__POD_NAME__"]
+            - name: labels
+              value: ["__POD_LABELS__"]
+            - name: evict-count
+              value: ["__EVICT_COUNT__"]
+            - name: evict-percent
+              value: ["__EVICT_PERCENT__"]
+            - name: waiting-time
+              value: ["__WAITING_TIME__"]
+
+            # loss params
+            - name: interface
+              value: ["__INTERFACE__"]
+            - name: percent
+              value: ["__PERCENT__"]
+            - name: timeout
+              value: ["__TIMEOUT__"]
+
+            # optional filters
+            - name: local-port
+              value: ["__LOCAL_PORT__"]
+            - name: remote-port
+              value: ["__REMOTE_PORT__"]
+            - name: destination-ip
+              value: ["__DESTINATION_IP__"]
+            - name: exclude-port
+              value: ["__EXCLUDE_PORT__"]
+            - name: exclude-ip
+              value: ["__EXCLUDE_IP__"]
+
+            # optional flags
+            - name: force
+              value: ["__FORCE__"]
+            - name: ignore-peer-port
+              value: ["__IGNORE_PEER_PORT__"]

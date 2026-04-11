@@ -1,0 +1,293 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disk-io-payload-script-pod-delay-intermit-configmap
+  namespace: chaosblade
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+    RUN_ID="$(date +%Y%m%d%H%M%S)"
+
+    : "${TARGET_NS:?TARGET_NS is required}"
+    : "${POD_NAME:=}"
+    : "${POD_LABELS:=}"
+
+    if [ -z "${POD_NAME// }" ] && [ -z "${POD_LABELS// }" ]; then
+      echo "ERROR: set either POD_NAME or POD_LABELS."
+      exit 1
+    fi
+
+    : "${IO_METHOD:?IO_METHOD is required}"
+    : "${IO_DELAY_MS:?IO_DELAY_MS is required}"
+    : "${IO_PERCENT:=100}"
+    : "${IO_PATH:?IO_PATH is required}"
+
+    : "${IO_TIMEOUT_PADDING:=30}"
+
+    : "${BLADE_NAME:=chaosblade-pod-io-delay-intermit-payload}"
+    : "${CLEANUP:=true}"
+    : "${LOG_DIR:=/logs}"
+
+    EVICT_COUNT="${EVICT_COUNT:-}"
+    EVICT_PERCENT="${EVICT_PERCENT:-}"
+    WAITING_TIME="${WAITING_TIME:-}"
+
+    mkdir -p "${LOG_DIR}"
+    SAFE_POD="${POD_NAME:-labels}"
+    LOG_FILE="${LOG_DIR}/pod-io-delay-intermit_${TARGET_NS}_${SAFE_POD}_${BLADE_NAME}_${RUN_ID}.log"
+    exec > >(tee -a "${LOG_FILE}") 2>&1
+
+    JSON_FILE="${LOG_FILE%.log}.json"
+    JSON_FIRST=1
+    JSON_CLOSED=0
+    echo "[" > "${JSON_FILE}"
+
+    log() { printf '%s [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${RUN_ID}" "$*"; }
+
+    json_close() {
+      if [ "${JSON_CLOSED}" -eq 0 ]; then
+        echo "]" >> "${JSON_FILE}"
+        JSON_CLOSED=1
+      fi
+    }
+
+    json_append_object() {
+      local fp="$1"
+      if [ "${JSON_FIRST}" -eq 0 ]; then echo "," >> "${JSON_FILE}"; fi
+      cat "${fp}" >> "${JSON_FILE}"
+      JSON_FIRST=0
+    }
+
+    # --- NEW: safe JSON escaping (avoid quotes/newlines breaking JSON) ---
+    json_escape() {
+      local s="${1:-}"
+      s="${s//\\/\\\\}"
+      s="${s//\"/\\\"}"
+      s="${s//$'\n'/\\n}"
+      s="${s//$'\r'/\\r}"
+      s="${s//$'\t'/\\t}"
+      printf '%s' "${s}"
+    }
+
+    # --- FIXED: no heredoc, no EOF alignment risk ---
+    json_append_meta() {
+      local cycle="$1" phase="$2" slow="$3" gap="$4"
+      local tmp
+      tmp="$(mktemp)"
+
+      {
+        printf '{\n'
+        printf '  "type": "cycle_meta",\n'
+        printf '  "run_id": "%s",\n' "$(json_escape "${RUN_ID}")"
+        printf '  "ts_utc": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf '  "cycle": %s,\n' "${cycle}"
+        printf '  "phase": "%s",\n' "$(json_escape "${phase}")"
+        printf '  "slow_seconds": %s,\n' "${slow}"
+        printf '  "gap_seconds": %s,\n' "${gap}"
+        printf '  "io_method": "%s",\n' "$(json_escape "${IO_METHOD}")"
+        printf '  "io_delay_ms": %s,\n' "${IO_DELAY_MS}"
+        printf '  "io_percent": %s,\n' "${IO_PERCENT}"
+        printf '  "io_path": "%s",\n' "$(json_escape "${IO_PATH}")"
+        printf '  "target_ns": "%s",\n' "$(json_escape "${TARGET_NS}")"
+        printf '  "pod_name": "%s",\n' "$(json_escape "${POD_NAME}")"
+        printf '  "pod_labels": "%s",\n' "$(json_escape "${POD_LABELS}")"
+        printf '  "blade_name": "%s"\n' "$(json_escape "${BLADE_NAME}")"
+        printf '}\n'
+      } > "${tmp}"
+
+      json_append_object "${tmp}"
+      rm -f "${tmp}" || true
+    }
+
+    rand_between() {
+      local min="$1" max="$2"
+      local span=$((max - min + 1))
+      echo $(( min + (RANDOM % span) ))
+    }
+
+    delete_blade() {
+      kubectl -n "${NS}" delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+      kubectl -n "${NS}" wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+    }
+
+    cleanup() {
+      json_close || true
+      if [ "${CLEANUP}" = "true" ]; then
+        log "cleanup: deleting chaosblade ${BLADE_NAME}"
+        delete_blade || true
+      fi
+    }
+    trap cleanup EXIT INT TERM
+
+    validate_target_pod() {
+      log "validating target: ns=${TARGET_NS} pod=${POD_NAME:-<by labels>} labels=${POD_LABELS:-<none>}"
+
+      if [ -n "${POD_NAME// }" ]; then
+        if ! kubectl -n "${TARGET_NS}" get pod "${POD_NAME}" >/dev/null 2>&1; then
+          log "ERROR: pod not found: ${TARGET_NS}/${POD_NAME}"
+          exit 1
+        fi
+      else
+        if ! kubectl -n "${TARGET_NS}" get pod -l "${POD_LABELS}" >/dev/null 2>&1; then
+          log "ERROR: no pods matched labels: ${TARGET_NS} -l ${POD_LABELS}"
+          exit 1
+        fi
+      fi
+
+      if [ -n "${POD_NAME// }" ]; then
+        if kubectl -n "${TARGET_NS}" get pod "${POD_NAME}" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' | grep -Fxq "chaosblade-fuse"; then
+          log "fuse sidecar detected: chaosblade-fuse"
+        else
+          log "WARN: chaosblade-fuse not found in pod containers (pod-IO may not work if webhook injection not done)"
+        fi
+      fi
+
+      log "validation OK"
+    }
+
+    apply_delay() {
+      local SLOW_SECONDS="$1"
+      local TIMEOUT_SECONDS="$2"
+
+      local tmp1 tmp2
+      tmp1="$(mktemp)"
+      tmp2="$(mktemp)"
+
+      sed \
+        -e "s|__BLADE_NAME__|${BLADE_NAME}|g" \
+        -e "s|__TARGET_NS__|${TARGET_NS}|g" \
+        -e "s|__POD_NAME__|${POD_NAME}|g" \
+        -e "s|__POD_LABELS__|${POD_LABELS}|g" \
+        -e "s|__IO_METHOD__|${IO_METHOD}|g" \
+        -e "s|__IO_DELAY_MS__|${IO_DELAY_MS}|g" \
+        -e "s|__IO_PERCENT__|${IO_PERCENT}|g" \
+        -e "s|__IO_PATH__|${IO_PATH}|g" \
+        -e "s|__TIMEOUT__|${TIMEOUT_SECONDS}|g" \
+        -e "s|__EVICT_COUNT__|${EVICT_COUNT}|g" \
+        -e "s|__EVICT_PERCENT__|${EVICT_PERCENT}|g" \
+        -e "s|__WAITING_TIME__|${WAITING_TIME}|g" \
+        /payload/disk-io-payload.yaml > "${tmp1}"
+
+      if [ -z "${POD_NAME// }" ]; then
+        sed '/- name: names/{N;d;}' "${tmp1}" > "${tmp2}" && mv "${tmp2}" "${tmp1}"
+      fi
+      if [ -z "${POD_LABELS// }" ]; then
+        sed '/- name: labels/{N;d;}' "${tmp1}" > "${tmp2}" && mv "${tmp2}" "${tmp1}"
+      fi
+      if [ -z "${EVICT_COUNT// }" ]; then
+        sed '/- name: evict-count/{N;d;}' "${tmp1}" > "${tmp2}" && mv "${tmp2}" "${tmp1}"
+      fi
+      if [ -z "${EVICT_PERCENT// }" ]; then
+        sed '/- name: evict-percent/{N;d;}' "${tmp1}" > "${tmp2}" && mv "${tmp2}" "${tmp1}"
+      fi
+      if [ -z "${WAITING_TIME// }" ]; then
+        sed '/- name: waiting-time/{N;d;}' "${tmp1}" > "${tmp2}" && mv "${tmp2}" "${tmp1}"
+      fi
+
+      delete_blade || true
+
+      log "DELAY(intermit): applying method=${IO_METHOD} delay=${IO_DELAY_MS}ms percent=${IO_PERCENT}% path=${IO_PATH} slow=${SLOW_SECONDS}s timeout=${TIMEOUT_SECONDS}s"
+      log "DELAY: rendered manifest (first 200 lines):"
+      nl -ba "${tmp1}" | sed -n '1,200p'
+
+      local tmpjson tmpjson2
+      tmpjson="$(mktemp)"
+      kubectl -n "${NS}" apply -f "${tmp1}" -o json > "${tmpjson}"
+      json_append_object "${tmpjson}"
+      rm -f "${tmpjson}" || true
+
+      for j in $(seq 1 10); do
+        STATUS="$(kubectl -n "${NS}" get chaosblades.chaosblade.io "${BLADE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
+        if [ "${STATUS}" = "Running" ]; then
+          log "DELAY: status.phase=Running"
+          break
+        fi
+        sleep 1
+      done
+
+      tmpjson2="$(mktemp)"
+      kubectl -n "${NS}" get chaosblades.chaosblade.io "${BLADE_NAME}" -o json > "${tmpjson2}"
+      json_append_object "${tmpjson2}"
+      rm -f "${tmpjson2}" || true
+
+      rm -f "${tmp1}" "${tmp2}" || true
+    }
+
+    pick_slow_seconds() {
+      if [ -n "${IO_SLOW_SECONDS:-}" ] && [ -n "${IO_SLOW_SECONDS// }" ]; then
+        echo "${IO_SLOW_SECONDS}"
+        return
+      fi
+      : "${IO_MIN_SLOW_SECONDS:=30}"
+      : "${IO_MAX_SLOW_SECONDS:=120}"
+      rand_between "${IO_MIN_SLOW_SECONDS}" "${IO_MAX_SLOW_SECONDS}"
+    }
+
+    pick_gap_seconds() {
+      if [ -n "${IO_GAP_SECONDS:-}" ] && [ -n "${IO_GAP_SECONDS// }" ]; then
+        echo "${IO_GAP_SECONDS}"
+        return
+      fi
+      : "${IO_MIN_GAP_SECONDS:=60}"
+      : "${IO_MAX_GAP_SECONDS:=300}"
+      rand_between "${IO_MIN_GAP_SECONDS}" "${IO_MAX_GAP_SECONDS}"
+    }
+
+    pick_cycles() {
+      if [ -n "${IO_CYCLES:-}" ] && [ -n "${IO_CYCLES// }" ]; then
+        echo "${IO_CYCLES}"
+        return
+      fi
+      : "${IO_MIN_CYCLES:=3}"
+      : "${IO_MAX_CYCLES:=6}"
+      rand_between "${IO_MIN_CYCLES}" "${IO_MAX_CYCLES}"
+    }
+
+    log "=============================================="
+    log "POD IO DELAY INTERMITTENT MODE (k8s yaml via CRD)"
+    log "runner_ns=${NS}"
+    log "target_pod=${TARGET_NS}/${POD_NAME:-<by labels>}"
+    log "target_labels=${POD_LABELS:-<none>}"
+    log "method=${IO_METHOD} delay=${IO_DELAY_MS}ms percent=${IO_PERCENT}%"
+    log "path=${IO_PATH}"
+    log "log_file=${LOG_FILE}"
+    log "=============================================="
+
+    delete_blade || true
+    validate_target_pod
+
+    CYCLES="$(pick_cycles)"
+    log "INTERMIT: cycles=${CYCLES}"
+
+    for i in $(seq 1 "${CYCLES}"); do
+      SLOW="$(pick_slow_seconds)"
+      GAP="$(pick_gap_seconds)"
+      TIMEOUT=$((SLOW + IO_TIMEOUT_PADDING))
+
+      json_append_meta "${i}" "slow_apply" "${SLOW}" "${GAP}"
+      apply_delay "${SLOW}" "${TIMEOUT}"
+
+      log "CYCLE ${i}/${CYCLES}: SLOW holding ${SLOW}s..."
+      json_append_meta "${i}" "slow_holding" "${SLOW}" "${GAP}"
+      sleep "${SLOW}"
+
+      log "CYCLE ${i}/${CYCLES}: delete blade to recover..."
+      json_append_meta "${i}" "recover_delete" "${SLOW}" "${GAP}"
+      delete_blade || true
+
+      if [ "${i}" -lt "${CYCLES}" ]; then
+        log "CYCLE ${i}/${CYCLES}: RECOVER gap ${GAP}s..."
+        json_append_meta "${i}" "recover_gap" "${SLOW}" "${GAP}"
+        sleep "${GAP}"
+      else
+        log "CYCLE ${i}/${CYCLES}: last cycle done; skip gap."
+        json_append_meta "${i}" "done_last_cycle" "${SLOW}" "${GAP}"
+      fi
+    done
+
+    log "INTERMIT: finished all cycles; cleanup & exit"
+    cleanup
+    log "done"

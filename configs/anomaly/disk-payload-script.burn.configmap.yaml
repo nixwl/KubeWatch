@@ -1,0 +1,172 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disk-payload-script-burn-configmap
+  namespace: chaosblade
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+    RUN_ID="$(date +%Y%m%d%H%M%S)"
+
+    : "${TARGET_NODE:?TARGET_NODE is required}"
+    : "${BLADE_NAME:=chaosblade-singlenode-disk-burn-payload}"
+    : "${CLEANUP:=true}"
+    : "${TIMEOUT:=}"  # New: support the TIMEOUT environment variable
+
+    : "${DISK_PATH:?DISK_PATH is required (e.g. / or /var/lib/rancher/k3s)}"
+
+    : "${READ:=true}"
+    : "${WRITE:=true}"
+    : "${SIZE:=20}"
+
+    : "${MIN_HOLD_SECONDS:=600}"
+    : "${MAX_HOLD_SECONDS:=1200}"
+    : "${TIMEOUT_PADDING:=30}"
+
+    : "${LOG_DIR:=/logs}"
+    mkdir -p "${LOG_DIR}"
+
+    # Check the ChaosBlade CRD scope
+    CHAOSBLADE_SCOPE=$(kubectl get crd chaosblades.chaosblade.io -o jsonpath='{.spec.scope}' 2>/dev/null || echo "Cluster")
+    echo "ChaosBlade CRD scope: $CHAOSBLADE_SCOPE"
+
+    # Choose the kubectl command based on scope
+    if [[ "$CHAOSBLADE_SCOPE" == "Cluster" ]]; then
+        KUBECTL_CMD="kubectl"
+    else
+        KUBECTL_CMD="kubectl -n ${NS}"
+    fi
+
+    LOG_FILE="${LOG_DIR}/disk-burn_${TARGET_NODE}_${BLADE_NAME}_${RUN_ID}.log"
+    exec > >(tee -a "${LOG_FILE}") 2>&1
+
+    log() { printf '%s [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${RUN_ID}" "$*"; }
+
+    is_uint() { [[ "$1" =~ ^[0-9]+$ ]]; }
+
+    rand_between() {
+      local min="$1" max="$2"
+      local span=$((max - min + 1))
+      echo $(( min + (RANDOM % span) ))
+    }
+
+    cleanup() {
+      if [ "${CLEANUP}" = "true" ]; then
+        log "cleanup: deleting ${BLADE_NAME} (scope=${CHAOSBLADE_SCOPE})"
+        
+        if [[ "$CHAOSBLADE_SCOPE" == "Cluster" ]]; then
+          kubectl delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+        else
+          kubectl -n "${NS}" delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+        fi
+      fi
+    }
+    trap cleanup EXIT INT TERM
+
+    drop_matcher_block() {
+      local matcher="$1" in="$2" out="$3"
+      awk -v m="$matcher" '
+        $0 ~ "^[[:space:]]*- name: " m "$" {skip=1; next}
+        skip==1 {skip=0; next}
+        {print}
+      ' "$in" > "$out"
+    }
+
+    drop_if_not_true() {
+      local var="$1" matcher="$2"
+      local val="${!var:-false}"
+      if [ "${val}" != "true" ]; then
+        local tmp2
+        tmp2="$(mktemp)"
+        drop_matcher_block "$matcher" "$TMP_MANIFEST" "$tmp2"
+        mv -f "$tmp2" "$TMP_MANIFEST"
+        log "INFO: ${var}!=true; removed matcher '${matcher}'"
+      fi
+    }
+
+    apply_burn() {
+      local HOLD_SECONDS="$1"
+      local TIMEOUT_SECONDS="$2"
+
+      TMP_MANIFEST="$(mktemp)"
+
+      sed \
+        -e "s|__BLADE_NAME__|${BLADE_NAME}|g" \
+        -e "s|__TARGET_NODE__|${TARGET_NODE}|g" \
+        -e "s|__DISK_PATH__|${DISK_PATH}|g" \
+        -e "s|__READ__|${READ}|g" \
+        -e "s|__WRITE__|${WRITE}|g" \
+        -e "s|__SIZE__|${SIZE}|g" \
+        -e "s|__TIMEOUT__|${TIMEOUT_SECONDS}|g" \
+        /payload/disk-payload.yaml > "${TMP_MANIFEST}"
+
+      # drop read/write matchers if not true
+      drop_if_not_true READ read
+      drop_if_not_true WRITE write
+
+      log "=============================================="
+      log "BURN MODE (node disk burn)"
+      log "runner_ns=${NS}"
+      log "node=${TARGET_NODE}"
+      log "path=${DISK_PATH}"
+      log "read=${READ} write=${WRITE} size=${SIZE}"
+      log "hold=${HOLD_SECONDS}s timeout=${TIMEOUT_SECONDS}s"
+      log "ChaosBlade CRD scope: ${CHAOSBLADE_SCOPE}"
+      log "log_file=${LOG_FILE}"
+      log "=============================================="
+
+      $KUBECTL_CMD delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+      $KUBECTL_CMD wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+
+      $KUBECTL_CMD create -f "${TMP_MANIFEST}"
+
+      for j in $(seq 1 60); do
+        STATUS="$($KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
+        if [ -n "${STATUS}" ]; then
+          log "status.phase=${STATUS}"
+          break
+        fi
+        sleep 1
+      done
+
+      rm -f "${TMP_MANIFEST}" || true
+    }
+
+    # --- sanity checks ---
+    is_uint "${SIZE}" || { log "ERROR: SIZE must be uint, got '${SIZE}'"; exit 2; }
+
+    if [ "${READ}" != "true" ] && [ "${WRITE}" != "true" ]; then
+      log "ERROR: at least one of READ/WRITE must be true (READ='${READ}', WRITE='${WRITE}')"
+      exit 2
+    fi
+
+    is_uint "${MIN_HOLD_SECONDS}" || { log "ERROR: MIN_HOLD_SECONDS must be uint"; exit 2; }
+    is_uint "${MAX_HOLD_SECONDS}" || { log "ERROR: MAX_HOLD_SECONDS must be uint"; exit 2; }
+    is_uint "${TIMEOUT_PADDING}"  || { log "ERROR: TIMEOUT_PADDING must be uint"; exit 2; }
+    [ "${MAX_HOLD_SECONDS}" -ge "${MIN_HOLD_SECONDS}" ] || { log "ERROR: MAX_HOLD_SECONDS < MIN_HOLD_SECONDS"; exit 2; }
+
+    if [ -n "${HOLD_SECONDS:-}" ] && [ -n "${HOLD_SECONDS// }" ]; then
+      is_uint "${HOLD_SECONDS}" || { log "ERROR: HOLD_SECONDS must be uint"; exit 2; }
+      HOLD="${HOLD_SECONDS}"
+    else
+      HOLD="$(rand_between "${MIN_HOLD_SECONDS}" "${MAX_HOLD_SECONDS}")"
+    fi
+
+    # Calculate TIMEOUT: if the environment variable is set, use it; otherwise use the original calculation
+    if [ -n "${TIMEOUT}" ]; then
+      TIMEOUT_SECONDS="${TIMEOUT}"
+      log "Using environment variable TIMEOUT: ${TIMEOUT_SECONDS} seconds"
+    else
+      TIMEOUT_SECONDS=$((HOLD + TIMEOUT_PADDING))
+      log "Calculated TIMEOUT: ${HOLD}s + ${TIMEOUT_PADDING}s = ${TIMEOUT_SECONDS}s"
+    fi
+
+    apply_burn "${HOLD}" "${TIMEOUT_SECONDS}"
+
+    log "holding ${HOLD}s..."
+    sleep "${HOLD}"
+
+    log "finished; exiting (cleanup by trap)..."

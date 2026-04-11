@@ -1,0 +1,188 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disk-payload-script-fill-configmap
+  namespace: chaosblade
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+    RUN_ID="$(date +%Y%m%d%H%M%S)"
+
+    : "${TARGET_NODE:?TARGET_NODE is required}"
+    : "${BLADE_NAME:=chaosblade-singlenode-disk-fill-payload}"
+    : "${CLEANUP:=true}"
+
+    : "${DISK_PATH:?DISK_PATH is required (e.g. / or /var/lib/rancher/k3s)}"
+
+    : "${PERCENT:=-}"
+    : "${RESERVE_MB:=-}"
+    : "${SIZE_MB:=-}"
+    : "${RETAIN_HANDLE:=false}"
+
+    : "${MIN_HOLD_SECONDS:=600}"
+    : "${MAX_HOLD_SECONDS:=1200}"
+    : "${TIMEOUT_PADDING:=30}"
+
+    : "${LOG_DIR:=/logs}"
+    mkdir -p "${LOG_DIR}"
+
+    LOG_FILE="${LOG_DIR}/disk-fill_${TARGET_NODE}_${BLADE_NAME}_${RUN_ID}.log"
+    exec > >(tee -a "${LOG_FILE}") 2>&1
+
+    log() { printf '%s [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${RUN_ID}" "$*"; }
+
+    is_uint() { [[ "$1" =~ ^[0-9]+$ ]]; }
+
+    rand_between() {
+      local min="$1" max="$2"
+      local span=$((max - min + 1))
+      echo $(( min + (RANDOM % span) ))
+    }
+
+    cleanup() {
+      if [ "${CLEANUP}" = "true" ]; then
+        log "cleanup: deleting ${BLADE_NAME}"
+        # NOTE: ChaosBlade is cluster-scoped -> NO -n
+        kubectl delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+        kubectl wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+      fi
+    }
+    trap cleanup EXIT INT TERM
+
+    drop_matcher_block() {
+      local matcher="$1" in="$2" out="$3"
+      awk -v m="$matcher" '
+        $0 ~ "^[[:space:]]*- name: " m "$" {skip=1; next}
+        skip==1 {skip=0; next}
+        {print}
+      ' "$in" > "$out"
+    }
+
+    drop_if_unset() {
+      local var="$1" matcher="$2"
+      local val="${!var:-}"
+      if [ -z "${val}" ] || [ "${val}" = "-" ] || [ "${val}" = "null" ]; then
+        local tmp2
+        tmp2="$(mktemp)"
+        drop_matcher_block "$matcher" "$TMP_MANIFEST" "$tmp2"
+        mv -f "$tmp2" "$TMP_MANIFEST"
+        log "INFO: ${var} is empty/'-'; removed matcher '${matcher}'"
+      fi
+    }
+
+    drop_if_not_true() {
+      local var="$1" matcher="$2"
+      local val="${!var:-false}"
+      if [ "${val}" != "true" ]; then
+        local tmp2
+        tmp2="$(mktemp)"
+        drop_matcher_block "$matcher" "$TMP_MANIFEST" "$tmp2"
+        mv -f "$tmp2" "$TMP_MANIFEST"
+        log "INFO: ${var}!=true; removed matcher '${matcher}'"
+      fi
+    }
+
+    apply_fill() {
+      local HOLD_SECONDS="$1"
+      local TIMEOUT_SECONDS="$2"
+
+      TMP_MANIFEST="$(mktemp)"
+
+      sed \
+        -e "s|__BLADE_NAME__|${BLADE_NAME}|g" \
+        -e "s|__TARGET_NODE__|${TARGET_NODE}|g" \
+        -e "s|__DISK_PATH__|${DISK_PATH}|g" \
+        -e "s|__PERCENT__|${PERCENT}|g" \
+        -e "s|__RESERVE_MB__|${RESERVE_MB}|g" \
+        -e "s|__SIZE_MB__|${SIZE_MB}|g" \
+        -e "s|__RETAIN_HANDLE__|${RETAIN_HANDLE}|g" \
+        -e "s|__TIMEOUT__|${TIMEOUT_SECONDS}|g" \
+        /payload/disk-payload.yaml > "${TMP_MANIFEST}"
+
+      drop_if_unset PERCENT percent
+      drop_if_unset RESERVE_MB reserve
+      drop_if_unset SIZE_MB size
+      drop_if_not_true RETAIN_HANDLE retain-handle
+
+      log "=============================================="
+      log "FILL MODE (node disk fill)"
+      log "runner_ns=${NS}"
+      log "node=${TARGET_NODE}"
+      log "path=${DISK_PATH}"
+      log "percent=${PERCENT} reserveMB=${RESERVE_MB} sizeMB=${SIZE_MB} (choose ONE)"
+      log "retain_handle=${RETAIN_HANDLE}"
+      log "hold=${HOLD_SECONDS}s timeout=${TIMEOUT_SECONDS}s"
+      log "log_file=${LOG_FILE}"
+      log "=============================================="
+
+      log "rendered manifest (first 220 lines):"
+      nl -ba "${TMP_MANIFEST}" | sed -n '1,220p'
+
+      # cluster-scoped -> NO -n
+      kubectl delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+      kubectl wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+
+      # since we deleted first, use create (avoid apply's GET "current configuration")
+      kubectl create -f "${TMP_MANIFEST}"
+
+      for j in $(seq 1 60); do
+        STATUS="$(kubectl get chaosblades.chaosblade.io "${BLADE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
+        if [ -n "${STATUS}" ]; then
+          log "status.phase=${STATUS}"
+          break
+        fi
+        sleep 1
+      done
+
+      rm -f "${TMP_MANIFEST}" || true
+    }
+
+    # --- sanity checks ---
+    set_cnt=0
+    [ "${PERCENT}" != "-" ] && set_cnt=$((set_cnt+1))
+    [ "${RESERVE_MB}" != "-" ] && set_cnt=$((set_cnt+1))
+    [ "${SIZE_MB}" != "-" ] && set_cnt=$((set_cnt+1))
+
+    if [ "${set_cnt}" -eq 0 ]; then
+      log "ERROR: set exactly one of PERCENT / RESERVE_MB / SIZE_MB"
+      exit 2
+    fi
+    if [ "${set_cnt}" -ne 1 ]; then
+      log "ERROR: only one of PERCENT/RESERVE_MB/SIZE_MB can be set"
+      exit 2
+    fi
+
+    if [ "${PERCENT}" != "-" ]; then
+      is_uint "${PERCENT}" || { log "ERROR: PERCENT must be uint [0,100], got '${PERCENT}'"; exit 2; }
+      [ "${PERCENT}" -le 100 ] || { log "ERROR: PERCENT must be <= 100, got '${PERCENT}'"; exit 2; }
+    fi
+    if [ "${RESERVE_MB}" != "-" ]; then
+      is_uint "${RESERVE_MB}" || { log "ERROR: RESERVE_MB must be uint (MB), got '${RESERVE_MB}'"; exit 2; }
+    fi
+    if [ "${SIZE_MB}" != "-" ]; then
+      is_uint "${SIZE_MB}" || { log "ERROR: SIZE_MB must be uint (MB), got '${SIZE_MB}'"; exit 2; }
+    fi
+
+    is_uint "${MIN_HOLD_SECONDS}" || { log "ERROR: MIN_HOLD_SECONDS must be uint"; exit 2; }
+    is_uint "${MAX_HOLD_SECONDS}" || { log "ERROR: MAX_HOLD_SECONDS must be uint"; exit 2; }
+    is_uint "${TIMEOUT_PADDING}"  || { log "ERROR: TIMEOUT_PADDING must be uint"; exit 2; }
+    [ "${MAX_HOLD_SECONDS}" -ge "${MIN_HOLD_SECONDS}" ] || { log "ERROR: MAX_HOLD_SECONDS < MIN_HOLD_SECONDS"; exit 2; }
+
+    if [ -n "${HOLD_SECONDS:-}" ] && [ -n "${HOLD_SECONDS// }" ]; then
+      is_uint "${HOLD_SECONDS}" || { log "ERROR: HOLD_SECONDS must be uint"; exit 2; }
+      HOLD="${HOLD_SECONDS}"
+    else
+      HOLD="$(rand_between "${MIN_HOLD_SECONDS}" "${MAX_HOLD_SECONDS}")"
+    fi
+
+    TIMEOUT=$((HOLD + TIMEOUT_PADDING))
+
+    apply_fill "${HOLD}" "${TIMEOUT}"
+
+    log "holding ${HOLD}s..."
+    sleep "${HOLD}"
+
+    log "finished; exiting (cleanup by trap)..."

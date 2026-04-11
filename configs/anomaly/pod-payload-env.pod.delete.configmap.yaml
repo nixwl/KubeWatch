@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pod-payload-env-pod-delete-configmap
+  namespace: chaosblade
+data:
+  TARGET_NS: "default"
+  POD_NAME: "stress-test-865d7b6b9c-crfx9"
+
+  POD_LABELS: "-" # e.g. "app=stress-test"; enable this when POD_NAME is not used
+  EVICT_COUNT: "-" # e.g. "1"
+  EVICT_PERCENT: "-" # e.g. "50"
+  WAITING_TIME: "-" # e.g. "20s" "1m" (default 20s)
+
+  BLADE_NAME: "chaosblade-pod-delete-payload"
+  CLEANUP: "true"
+
+  # runtime control
+  DELETE_MIN_HOLD_SECONDS: "60"
+  DELETE_MAX_HOLD_SECONDS: "120"
+  # DELETE_HOLD_SECONDS: "300"
+  DELETE_TIMEOUT_PADDING: "15"
+
+  # safety: whether to set matcher timeout (recommended false for delete; delete is one-shot)
+  DELETE_ENABLE_TIMEOUT: "false"
+
+  LOG_DIR: "/logs"

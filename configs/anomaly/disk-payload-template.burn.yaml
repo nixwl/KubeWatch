@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disk-payload-template-burn-configmap
+  namespace: chaosblade
+data:
+  disk-payload.yaml: |
+    apiVersion: chaosblade.io/v1alpha1
+    kind: ChaosBlade
+    metadata:
+      name: __BLADE_NAME__
+      labels:
+        app: chaosblade-disk-burn-payload
+    spec:
+      experiments:
+        - scope: node
+          target: disk
+          action: burn
+          desc: "node __TARGET_NODE__ disk burn path=__DISK_PATH__ selector(read=__READ__, write=__WRITE__) size=__SIZE__"
+          matchers:
+            - name: names
+              value: ["__TARGET_NODE__"]
+
+            # required
+            - name: path
+              value: ["__DISK_PATH__"]
+
+            # choose at least one (script removes if not true)
+            - name: read
+              value: ["__READ__"]
+            - name: write
+              value: ["__WRITE__"]
+
+            # io block size (integer)
+            - name: size
+              value: ["__SIZE__"]
+
+            # always set timeout
+            - name: timeout
+              value: ["__TIMEOUT__"]

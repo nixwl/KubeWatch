@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pod-payload-template-pod-delete-configmap
+  namespace: chaosblade
+data:
+  pod-payload.yaml: |
+    apiVersion: chaosblade.io/v1alpha1
+    kind: ChaosBlade
+    metadata:
+      name: __BLADE_NAME__
+      labels:
+        app: chaosblade-pod-delete-payload
+    spec:
+      experiments:
+        - scope: pod
+          target: pod
+          action: delete
+          desc: "pod DELETE ns=__TARGET_NS__ names=__POD_NAME__ labels=__POD_LABELS__"
+          matchers:
+            - name: namespace
+              value: ["__TARGET_NS__"]
+            - name: names
+              value: ["__POD_NAME__"]
+            - name: labels
+              value: ["__POD_LABELS__"]
+            - name: evict-count
+              value: ["__EVICT_COUNT__"]
+            - name: evict-percent
+              value: ["__EVICT_PERCENT__"]
+            - name: waiting-time
+              value: ["__WAITING_TIME__"]
+            - name: timeout
+              value: ["__TIMEOUT__"]

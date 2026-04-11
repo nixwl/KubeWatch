@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disk-payload-env-fill-configmap
+  namespace: chaosblade
+data:
+  TARGET_NODE: "emanage1"
+  BLADE_NAME: "chaosblade-singlenode-disk-fill-payload"
+  CLEANUP: "true"
+
+  # target path on the node filesystem (DO NOT use env var named PATH!)
+  DISK_PATH: "/var/lib/rancher"
+
+  # choose ONE (mutually exclusive)
+  # percent: [0,100] integer
+  PERCENT: "90"
+  # reserve: MB integer (keep at least this much free)
+  RESERVE_MB: "-"
+  # size: MB integer (fill fixed amount)
+  SIZE_MB: "-"
+
+  # optional flag
+  RETAIN_HANDLE: "false"
+
+  # runtime control
+  MIN_HOLD_SECONDS: "900"
+  MAX_HOLD_SECONDS: "1800"
+  # HOLD_SECONDS: "1800"
+  TIMEOUT_PADDING: "30"
+
+  # logs dir with pvc (default=/logs)
+  LOG_DIR: "/logs"

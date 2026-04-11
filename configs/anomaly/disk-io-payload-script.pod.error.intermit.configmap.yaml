@@ -1,0 +1,315 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disk-io-payload-script-pod-error-intermit-configmap
+  namespace: chaosblade
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+    RUN_ID="$(date +%Y%m%d%H%M%S)"
+
+    : "${TARGET_NS:?TARGET_NS is required}"
+    : "${POD_NAME:=}"
+    : "${POD_LABELS:=}"
+
+    if [ -z "${POD_NAME// }" ] && [ -z "${POD_LABELS// }" ]; then
+      echo "ERROR: set either POD_NAME or POD_LABELS."
+      exit 1
+    fi
+
+    : "${IO_METHOD:?IO_METHOD is required}"
+    : "${IO_ERRNO:?IO_ERRNO is required}"
+    : "${IO_PERCENT:=100}"
+    : "${IO_PATH:?IO_PATH is required}"
+
+    : "${IO_FAIL_MIN_HOLD_SECONDS:=30}"
+    : "${IO_FAIL_MAX_HOLD_SECONDS:=120}"
+    : "${IO_RECOVER_MIN_SECONDS:=30}"
+    : "${IO_RECOVER_MAX_SECONDS:=180}"
+    : "${IO_TIMEOUT_PADDING:=30}"
+
+    : "${IO_TOTAL_SECONDS:=}"
+    : "${IO_CYCLES:=}"
+
+    : "${BLADE_NAME:=chaosblade-pod-io-error-intermit-payload}"
+    : "${CLEANUP:=true}"
+    : "${LOG_DIR:=/logs}"
+
+    EVICT_COUNT="${EVICT_COUNT:-}"
+    EVICT_PERCENT="${EVICT_PERCENT:-}"
+    WAITING_TIME="${WAITING_TIME:-}"
+
+    IO_GEN_ENABLE="${IO_GEN_ENABLE:-false}"
+    IO_GEN_MODE="${IO_GEN_MODE:-mixed}"
+    IO_GEN_INTERVAL_MS="${IO_GEN_INTERVAL_MS:-200}"
+    IO_GEN_FILE_KB="${IO_GEN_FILE_KB:-64}"
+    IO_GEN_CONTAINER="${IO_GEN_CONTAINER:-}"
+    IO_GEN_FILENAME="${IO_GEN_FILENAME:-seed.bin}"
+
+    mkdir -p "${LOG_DIR}"
+    SAFE_POD="${POD_NAME:-labels}"
+    LOG_FILE="${LOG_DIR}/pod-io-error-intermit_${TARGET_NS}_${SAFE_POD}_${BLADE_NAME}_${RUN_ID}.log"
+    exec > >(tee -a "${LOG_FILE}") 2>&1
+
+    JSON_FILE="${LOG_FILE%.log}.json"
+    JSON_FIRST=1
+    JSON_CLOSED=0
+    echo "[" > "${JSON_FILE}"
+
+    log() { printf '%s [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${RUN_ID}" "$*"; }
+
+    json_close() {
+      if [ "${JSON_CLOSED}" -eq 0 ]; then
+        echo "]" >> "${JSON_FILE}"
+        JSON_CLOSED=1
+      fi
+    }
+
+    json_append_object() {
+      local fp="$1"
+      if [ "${JSON_FIRST}" -eq 0 ]; then echo "," >> "${JSON_FILE}"; fi
+      cat "${fp}" >> "${JSON_FILE}"
+      JSON_FIRST=0
+    }
+
+    rand_between() {
+      local min="$1" max="$2"
+      local span=$((max - min + 1))
+      echo $(( min + (RANDOM % span) ))
+    }
+
+    cleanup_blade() {
+      log "cleanup: deleting chaosblade ${BLADE_NAME}"
+      kubectl -n "${NS}" delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+      kubectl -n "${NS}" wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+    }
+
+    cleanup() {
+      json_close || true
+      if [ "${CLEANUP}" = "true" ]; then
+        cleanup_blade || true
+      fi
+    }
+    trap cleanup EXIT INT TERM
+
+    resolve_target_pod() {
+      if [ -n "${POD_NAME// }" ]; then
+        echo "${POD_NAME}"
+        return 0
+      fi
+      kubectl -n "${TARGET_NS}" get pod -l "${POD_LABELS}" -o jsonpath='{.items[0].metadata.name}'
+    }
+
+    validate_target_pod() {
+      log "validating target: ns=${TARGET_NS} pod=${POD_NAME:-<by labels>} labels=${POD_LABELS:-<none>}"
+
+      if [ -n "${POD_NAME// }" ]; then
+        kubectl -n "${TARGET_NS}" get pod "${POD_NAME}" >/dev/null 2>&1 || { log "ERROR: pod not found: ${TARGET_NS}/${POD_NAME}"; exit 1; }
+      else
+        kubectl -n "${TARGET_NS}" get pod -l "${POD_LABELS}" >/dev/null 2>&1 || { log "ERROR: no pods matched labels: ${TARGET_NS} -l ${POD_LABELS}"; exit 1; }
+      fi
+
+      local P
+      P="$(resolve_target_pod)"
+      if [ -n "${P// }" ]; then
+        if kubectl -n "${TARGET_NS}" get pod "${P}" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' | grep -Fxq "chaosblade-fuse"; then
+          log "fuse sidecar detected: chaosblade-fuse"
+        else
+          log "WARN: chaosblade-fuse not found (pod-IO may not work if webhook injection not done)"
+        fi
+      fi
+
+      log "validation OK"
+    }
+
+    render_and_apply_blade() {
+      local tmp1 tmp2
+      tmp1="$(mktemp)"
+      tmp2="$(mktemp)"
+
+      sed \
+        -e "s|__BLADE_NAME__|${BLADE_NAME}|g" \
+        -e "s|__TARGET_NS__|${TARGET_NS}|g" \
+        -e "s|__POD_NAME__|${POD_NAME}|g" \
+        -e "s|__POD_LABELS__|${POD_LABELS}|g" \
+        -e "s|__IO_METHOD__|${IO_METHOD}|g" \
+        -e "s|__IO_ERRNO__|${IO_ERRNO}|g" \
+        -e "s|__IO_PERCENT__|${IO_PERCENT}|g" \
+        -e "s|__IO_PATH__|${IO_PATH}|g" \
+        -e "s|__EVICT_COUNT__|${EVICT_COUNT}|g" \
+        -e "s|__EVICT_PERCENT__|${EVICT_PERCENT}|g" \
+        -e "s|__WAITING_TIME__|${WAITING_TIME}|g" \
+        /payload/disk-io-payload.yaml > "${tmp1}"
+
+      # remove empty optional matchers (each matcher block is 2 lines: name + value)
+      if [ -z "${POD_NAME// }" ]; then
+        sed '/- name: names/{N;d;}' "${tmp1}" > "${tmp2}" && mv "${tmp2}" "${tmp1}"
+      fi
+      if [ -z "${POD_LABELS// }" ]; then
+        sed '/- name: labels/{N;d;}' "${tmp1}" > "${tmp2}" && mv "${tmp2}" "${tmp1}"
+      fi
+      if [ -z "${EVICT_COUNT// }" ]; then
+        sed '/- name: evict-count/{N;d;}' "${tmp1}" > "${tmp2}" && mv "${tmp2}" "${tmp1}"
+      fi
+      if [ -z "${EVICT_PERCENT// }" ]; then
+        sed '/- name: evict-percent/{N;d;}' "${tmp1}" > "${tmp2}" && mv "${tmp2}" "${tmp1}"
+      fi
+      if [ -z "${WAITING_TIME// }" ]; then
+        sed '/- name: waiting-time/{N;d;}' "${tmp1}" > "${tmp2}" && mv "${tmp2}" "${tmp1}"
+      fi
+
+      log "apply: method=${IO_METHOD} errno=${IO_ERRNO} percent=${IO_PERCENT}% path=${IO_PATH}"
+      nl -ba "${tmp1}" | sed -n '1,200p'
+
+      local tmpjson
+      tmpjson="$(mktemp)"
+      kubectl -n "${NS}" apply -f "${tmp1}" -o json > "${tmpjson}"
+      json_append_object "${tmpjson}"
+      rm -f "${tmpjson}" || true
+
+      rm -f "${tmp1}" "${tmp2}" || true
+    }
+
+    io_generate_for_seconds() {
+      local secs="$1"
+      [ "${IO_GEN_ENABLE}" = "true" ] || return 0
+
+      local POD
+      POD="$(resolve_target_pod)"
+      if [ -z "${POD// }" ]; then
+        log "IO_GEN: cannot resolve target pod, skip"
+        return 0
+      fi
+
+      local CONTAINER_ARGS=()
+      if [ -n "${IO_GEN_CONTAINER// }" ]; then
+        CONTAINER_ARGS=(-c "${IO_GEN_CONTAINER}")
+      fi
+
+      local interval="${IO_GEN_INTERVAL_MS}"
+      local kb="${IO_GEN_FILE_KB}"
+      local seed="${IO_GEN_FILENAME}"
+      local mode="${IO_GEN_MODE}"
+
+      log "IO_GEN: start pod=${TARGET_NS}/${POD} mode=${mode} path=${IO_PATH} kb=${kb} interval=${interval}ms duration=${secs}s"
+      kubectl -n "${TARGET_NS}" exec "${POD}" "${CONTAINER_ARGS[@]}" -- sh -c "
+        set +e
+        mkdir -p '${IO_PATH}'
+        dd if=/dev/urandom of='${IO_PATH}/${seed}' bs=1024 count=${kb} 2>/dev/null || true
+        end=\$(( \$(date +%s) + ${secs} ))
+        while [ \$(date +%s) -lt \$end ]; do
+          if [ '${mode}' = 'read' ] || [ '${mode}' = 'mixed' ]; then
+            dd if='${IO_PATH}/${seed}' of=/dev/null bs=1024 count=${kb} 2>/dev/null || true
+          fi
+          if [ '${mode}' = 'write' ] || [ '${mode}' = 'mixed' ]; then
+            dd if=/dev/zero of='${IO_PATH}/.io_gen.tmp' bs=1024 count=${kb} 2>/dev/null || true
+            sync 2>/dev/null || true
+            rm -f '${IO_PATH}/.io_gen.tmp' 2>/dev/null || true
+          fi
+          usleep \$(( ${interval} * 1000 )) 2>/dev/null || sleep 0.2
+        done
+        exit 0
+      " || true
+      log "IO_GEN: done"
+    }
+
+    pick_fail_hold() {
+      if [ -n "${IO_FAIL_HOLD_SECONDS:-}" ] && [ -n "${IO_FAIL_HOLD_SECONDS// }" ]; then
+        echo "${IO_FAIL_HOLD_SECONDS}"
+      else
+        rand_between "${IO_FAIL_MIN_HOLD_SECONDS}" "${IO_FAIL_MAX_HOLD_SECONDS}"
+      fi
+    }
+
+    pick_recover_hold() {
+      if [ -n "${IO_RECOVER_SECONDS:-}" ] && [ -n "${IO_RECOVER_SECONDS// }" ]; then
+        echo "${IO_RECOVER_SECONDS}"
+      else
+        rand_between "${IO_RECOVER_MIN_SECONDS}" "${IO_RECOVER_MAX_SECONDS}"
+      fi
+    }
+
+    should_continue() {
+      local cycle="$1"
+      local now="$2"
+      local end_at="$3"
+
+      if [ -n "${IO_CYCLES// }" ]; then
+        [ "${cycle}" -le "${IO_CYCLES}" ] && return 0 || return 1
+      fi
+
+      if [ -n "${end_at// }" ]; then
+        [ "${now}" -lt "${end_at}" ] && return 0 || return 1
+      fi
+
+      # Default: if neither is set, run once
+      [ "${cycle}" -le 1 ] && return 0 || return 1
+    }
+
+    log "=============================================="
+    log "POD IO ERROR intermit MODE (k8s yaml via CRD)"
+    log "runner_ns=${NS}"
+    log "target=${TARGET_NS}/${POD_NAME:-<by labels>}"
+    log "labels=${POD_LABELS:-<none>}"
+    log "method=${IO_METHOD} errno=${IO_ERRNO} percent=${IO_PERCENT}% path=${IO_PATH}"
+    log "fail_hold=[${IO_FAIL_MIN_HOLD_SECONDS},${IO_FAIL_MAX_HOLD_SECONDS}] recover=[${IO_RECOVER_MIN_SECONDS},${IO_RECOVER_MAX_SECONDS}]"
+    log "total_seconds=${IO_TOTAL_SECONDS:-<none>} cycles=${IO_CYCLES:-<none>}"
+    log "io_gen_enable=${IO_GEN_ENABLE}"
+    log "log_file=${LOG_FILE}"
+    log "=============================================="
+
+    # Clean up leftovers (avoid name collisions)
+    cleanup_blade || true
+
+    validate_target_pod
+
+    START_TS="$(date +%s)"
+    END_AT=""
+    if [ -n "${IO_TOTAL_SECONDS// }" ]; then
+      END_AT=$((START_TS + IO_TOTAL_SECONDS))
+    fi
+
+    cycle=1
+    while true; do
+      now="$(date +%s)"
+      if ! should_continue "${cycle}" "${now}" "${END_AT}"; then
+        log "stop: reach end condition (cycle=${cycle})"
+        break
+      fi
+
+      FAIL_HOLD="$(pick_fail_hold)"
+      RECOVER_HOLD="$(pick_recover_hold)"
+
+      log "---------- cycle ${cycle} START ----------"
+      log "cycle ${cycle}: FAIL window ${FAIL_HOLD}s (apply blade)"
+      render_and_apply_blade
+
+      # Optional: generate I/O to ensure observability (default false)
+      if [ "${IO_GEN_ENABLE}" = "true" ]; then
+        io_generate_for_seconds "${FAIL_HOLD}" &
+        IO_GEN_PID=$!
+      else
+        IO_GEN_PID=""
+      fi
+
+      sleep "${FAIL_HOLD}"
+
+      if [ -n "${IO_GEN_PID}" ]; then
+        wait "${IO_GEN_PID}" || true
+      fi
+
+      log "cycle ${cycle}: RECOVER window ${RECOVER_HOLD}s (delete blade)"
+      cleanup_blade || true
+      sleep "${RECOVER_HOLD}"
+
+      log "---------- cycle ${cycle} END   ----------"
+      cycle=$((cycle + 1))
+    done
+
+    log "final cleanup..."
+    cleanup_blade || true
+    json_close || true
+    log "done"

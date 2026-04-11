@@ -1,0 +1,17 @@
+# cpu-payload-env.ramp.configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cpu-payload-env-ramp-configmap
+  namespace: chaosblade
+data:
+  TARGET_NODE: "emanage1"
+  BLADE_NAME: "chaosblade-singlenode-cpu-ramp-payload"
+  HIGH: "40"
+  LOW: "30"
+  RAMP_SECONDS: "15"
+  HOLD_SECONDS: "25"
+  CYCLES: "5"
+  CPU_COUNT: ""
+  CPU_LIST: ""
+  CLEANUP: "true"

@@ -1,0 +1,34 @@
+# net-payload-env.delay.configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: net-payload-env-delay-configmap
+  namespace: chaosblade
+data:
+  TARGET_NODE: "emanage1"
+  BLADE_NAME: "chaosblade-singlenode-net-delay-payload"
+  CLEANUP: "true"
+  # ms unit: 100ms ~ 200ms
+  TIME_MS: "150"
+  OFFSET_MS: "50"
+  INTERFACE: "ens33"
+
+  # optional filters (empty/'-' means: not set; script will remove the matcher)
+  LOCAL_PORT: "-"
+  REMOTE_PORT: "-"
+  DESTINATION_IP: "-"
+  EXCLUDE_IP: "-"
+  # OPT PORT: 22,6443,10250,10249,10259,10257,53,123,9090,9093,3000,9100,8080,8081,9153,8086,1234,2379,2380,80,443
+  EXCLUDE_PORT: "22"
+
+  # optional flags
+  FORCE: "false"
+  IGNORE_PEER_PORT: "false"
+  # runtime control
+  MIN_HOLD_SECONDS: "600"
+  MAX_HOLD_SECONDS: "1200"
+  # HOLD_SECONDS: "3000"
+  TIMEOUT_PADDING: "30"
+
+  # logs dir with pvc (default=/logs)
+  LOG_DIR: "/logs"

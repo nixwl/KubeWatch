@@ -1,0 +1,18 @@
+# mem-payload-env.spike.configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mem-payload-env-spike-configmap
+  namespace: chaosblade
+data:
+  TARGET_NODE: "emanage1"
+  BLADE_NAME: "chaosblade-singlenode-mem-spike-payload"
+  CLEANUP: "true"
+  PERCENT: "85"
+  MAX_MEM_PERCENT: "90"
+  RAMP_SECONDS: "2"
+  MIN_HOLD_SECONDS: "30"
+  MAX_HOLD_SECONDS: "90"
+  TIMEOUT_PADDING: "30"
+  # HOLD_SECONDS: "180"
+  MEM_MODE: "ram"

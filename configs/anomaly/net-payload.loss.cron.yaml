@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: net-payload-loss-cron-runner
+  namespace: chaosblade
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: net-payload-loss-cron-runner
+rules:
+  - apiGroups: ["chaosblade.io"]
+    resources: ["chaosblades"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: net-payload-loss-cron-runner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: net-payload-loss-cron-runner
+subjects:
+  - kind: ServiceAccount
+    name: net-payload-loss-cron-runner
+    namespace: chaosblade
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: net-payload-loss-cron
+  namespace: chaosblade
+spec:
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # Give enough time to cover the hold (recommend >= MAX_HOLD_SECONDS + TIMEOUT_PADDING + 60)
+      activeDeadlineSeconds: 12000
+      ttlSecondsAfterFinished: 300
+      template:
+        spec:
+          serviceAccountName: net-payload-loss-cron-runner
+          restartPolicy: Never
+          containers:
+            - name: runner
+              image: bitnami/kubectl
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - configMapRef:
+                    name: net-payload-env-loss-configmap
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+                - name: payload
+                  mountPath: /payload
+                - name: logs
+                  mountPath: /logs
+              command: ["/scripts/run.sh"]
+          volumes:
+            - name: script
+              configMap:
+                name: net-payload-script-loss-configmap
+                defaultMode: 0555
+            - name: payload
+              configMap:
+                name: net-payload-template-loss-configmap
+                defaultMode: 0444
+            - name: logs
+              persistentVolumeClaim:
+                claimName: node-logs-pvc

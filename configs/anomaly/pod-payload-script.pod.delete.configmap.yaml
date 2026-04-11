@@ -1,0 +1,200 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pod-payload-script-pod-fail-configmap
+  namespace: chaosblade
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+    RUN_ID="$(date +%Y%m%d%H%M%S)"
+
+    : "${TARGET_NS:?TARGET_NS is required}"
+    : "${POD_NAME:=}"
+
+    : "${POD_LABELS:=-}"
+    : "${EVICT_COUNT:=-}"
+    : "${EVICT_PERCENT:=-}"
+    : "${WAITING_TIME:=-}"
+
+    : "${BLADE_NAME:=chaosblade-pod-fail-payload}"
+    : "${CLEANUP:=true}"
+
+    : "${FAIL_MIN_HOLD_SECONDS:=600}"
+    : "${FAIL_MAX_HOLD_SECONDS:=1200}"
+    : "${FAIL_TIMEOUT_PADDING:=30}"
+    : "${FAIL_ENABLE_TIMEOUT:=true}"
+
+    : "${LOG_DIR:=/logs}"
+
+    normalize_opt() {
+      local v="${1:-}"
+      v="$(printf '%s' "$v" | tr -d '[:space:]')"
+      if [ -z "$v" ] || [ "$v" = "-" ]; then echo ""; else echo "$v"; fi
+    }
+
+    POD_NAME="$(normalize_opt "${POD_NAME}")"
+    POD_LABELS="$(normalize_opt "${POD_LABELS}")"
+    EVICT_COUNT="$(normalize_opt "${EVICT_COUNT}")"
+    EVICT_PERCENT="$(normalize_opt "${EVICT_PERCENT}")"
+    WAITING_TIME="$(normalize_opt "${WAITING_TIME}")"
+
+    mkdir -p "${LOG_DIR}"
+    LOG_FILE="${LOG_DIR}/pod-fail_${TARGET_NS}_${POD_NAME:-labels}_${BLADE_NAME}_${RUN_ID}.log"
+    exec > >(tee -a "${LOG_FILE}") 2>&1
+
+    JSON_FILE="${LOG_FILE%.log}.json"
+    JSON_FIRST=1
+    JSON_CLOSED=0
+    echo "[" > "${JSON_FILE}"
+
+    log() { printf '%s [%s] %s
+    ' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${RUN_ID}" "$*"; }
+
+    json_close() {
+      if [ "${JSON_CLOSED}" -eq 0 ]; then
+        echo "]" >> "${JSON_FILE}"
+        JSON_CLOSED=1
+      fi
+    }
+
+    json_append_object() {
+      local fp="$1"
+      if [ "${JSON_FIRST}" -eq 0 ]; then echo "," >> "${JSON_FILE}"; fi
+      cat "${fp}" >> "${JSON_FILE}"
+      JSON_FIRST=0
+    }
+
+    is_uint() { [[ "${1:-}" =~ ^[0-9]+$ ]]; }
+
+    rand_between() {
+      local min="$1" max="$2"
+      local span=$((max - min + 1))
+      echo $(( min + (RANDOM % span) ))
+    }
+
+    cleanup() {
+      json_close || true
+      if [ "${CLEANUP}" = "true" ]; then
+        log "cleanup: deleting chaosblade ${BLADE_NAME}"
+        kubectl -n "${NS}" delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+        kubectl -n "${NS}" wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+      fi
+    }
+    trap cleanup EXIT INT TERM
+
+    remove_matcher_block() {
+      local key="$1" file="$2"
+      sed "/- name: ${key}/{N;d;}" "${file}" > "${file}.tmp" && mv "${file}.tmp" "${file}"
+    }
+
+    validate_target() {
+      if [ -n "${POD_NAME}" ]; then
+        log "validating pod exists: ${TARGET_NS}/${POD_NAME}"
+        if ! kubectl -n "${TARGET_NS}" get pod "${POD_NAME}" >/dev/null 2>&1; then
+          log "ERROR: pod not found: ${TARGET_NS}/${POD_NAME}"
+          exit 1
+        fi
+      else
+        log "INFO: POD_NAME empty; will target by labels='${POD_LABELS}'"
+      fi
+    }
+
+    apply_fail() {
+      local HOLD_SECONDS="$1"
+      local TIMEOUT_SECONDS="$2"
+      local tmp
+      tmp="$(mktemp)"
+
+      sed     -e "s|__BLADE_NAME__|${BLADE_NAME}|g"     -e "s|__TARGET_NS__|${TARGET_NS}|g"     -e "s|__POD_NAME__|${POD_NAME}|g"     -e "s|__POD_LABELS__|${POD_LABELS}|g"     -e "s|__EVICT_COUNT__|${EVICT_COUNT}|g"     -e "s|__EVICT_PERCENT__|${EVICT_PERCENT}|g"     -e "s|__WAITING_TIME__|${WAITING_TIME}|g"     -e "s|__TIMEOUT__|${TIMEOUT_SECONDS}|g"     /payload/pod-payload.yaml > "${tmp}"
+
+      # selectors
+      [ -z "${POD_NAME}" ]       && remove_matcher_block "names" "${tmp}"
+      [ -z "${POD_LABELS}" ]     && remove_matcher_block "labels" "${tmp}"
+      [ -z "${EVICT_COUNT}" ]    && remove_matcher_block "evict-count" "${tmp}"
+      [ -z "${EVICT_PERCENT}" ]  && remove_matcher_block "evict-percent" "${tmp}"
+      [ -z "${WAITING_TIME}" ]   && remove_matcher_block "waiting-time" "${tmp}"
+
+      # timeout (recommended for fail)
+      [ "${FAIL_ENABLE_TIMEOUT}" != "true" ] && remove_matcher_block "timeout" "${tmp}"
+
+      log "=============================================="
+      log "POD FAIL(unavailable) MODE (k8s yaml via CRD)"
+      log "runner_ns=${NS}"
+      log "target=${TARGET_NS}/${POD_NAME:-<by labels>}"
+      log "labels='${POD_LABELS}'"
+      log "hold=${HOLD_SECONDS}s timeout=${TIMEOUT_SECONDS}s enable_timeout=${FAIL_ENABLE_TIMEOUT}"
+      log "log_file=${LOG_FILE}"
+      log "=============================================="
+
+      log "rendered manifest (first 200 lines):"
+      nl -ba "${tmp}" | sed -n '1,200p'
+
+      kubectl -n "${NS}" delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+      kubectl -n "${NS}" wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+
+      local tmpjson tmpjson2
+      tmpjson="$(mktemp)"
+      kubectl -n "${NS}" apply -f "${tmp}" -o json > "${tmpjson}"
+      json_append_object "${tmpjson}"
+      rm -f "${tmpjson}" || true
+
+      for j in $(seq 1 30); do
+        STATUS="$(kubectl -n "${NS}" get chaosblades.chaosblade.io "${BLADE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
+        if [ "${STATUS}" = "Running" ]; then
+          log "status.phase=Running"
+          break
+        fi
+        sleep 1
+      done
+
+      tmpjson2="$(mktemp)"
+      kubectl -n "${NS}" get chaosblades.chaosblade.io "${BLADE_NAME}" -o json > "${tmpjson2}"
+      json_append_object "${tmpjson2}"
+      rm -f "${tmpjson2}" || true
+
+      rm -f "${tmp}" || true
+    }
+
+    # --- sanity checks ---
+    for k in FAIL_MIN_HOLD_SECONDS FAIL_MAX_HOLD_SECONDS FAIL_TIMEOUT_PADDING; do
+      if ! is_uint "${!k}"; then log "ERROR: ${k} must be uint, got '${!k}'"; exit 2; fi
+    done
+    if [ "${FAIL_MAX_HOLD_SECONDS}" -lt "${FAIL_MIN_HOLD_SECONDS}" ]; then
+      log "ERROR: FAIL_MAX_HOLD_SECONDS < FAIL_MIN_HOLD_SECONDS"
+      exit 2
+    fi
+
+    # At least one of names or labels
+    if [ -z "${POD_NAME}" ] && [ -z "${POD_LABELS}" ]; then
+      log "ERROR: POD_NAME empty AND POD_LABELS empty. Set at least one."
+      exit 2
+    fi
+
+    # evict-count and evict-percent are mutually exclusive
+    if [ -n "${EVICT_COUNT}" ] && [ -n "${EVICT_PERCENT}" ]; then
+      log "ERROR: EVICT_COUNT and EVICT_PERCENT are both set. Please set only one."
+      exit 2
+    fi
+
+    validate_target
+
+    if [ -n "${FAIL_HOLD_SECONDS:-}" ] && [ -n "${FAIL_HOLD_SECONDS// }" ]; then
+      if ! is_uint "${FAIL_HOLD_SECONDS}"; then log "ERROR: FAIL_HOLD_SECONDS must be uint"; exit 2; fi
+      HOLD="${FAIL_HOLD_SECONDS}"
+    else
+      HOLD="$(rand_between "${FAIL_MIN_HOLD_SECONDS}" "${FAIL_MAX_HOLD_SECONDS}")"
+    fi
+
+    TIMEOUT=$((HOLD + FAIL_TIMEOUT_PADDING))
+
+    apply_fail "${HOLD}" "${TIMEOUT}"
+
+    log "holding ${HOLD}s... (pod should become unavailable during this window)"
+    sleep "${HOLD}"
+
+    log "finished; deleting blade now to recover..."
+    cleanup
+    log "done"

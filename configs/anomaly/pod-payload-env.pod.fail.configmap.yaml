@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pod-payload-env-pod-fail-configmap
+  namespace: chaosblade
+data:
+  TARGET_NS: "default"
+  POD_NAME: "stress-test-865d7b6b9c-md76h"
+
+  POD_LABELS: "-" # e.g. "app=stress-test"
+  EVICT_COUNT: "-" # e.g. "1"
+  EVICT_PERCENT: "-" # e.g. "50"
+  WAITING_TIME: "-" # e.g. "20s" "1m" (default 20s)
+
+  BLADE_NAME: "chaosblade-pod-fail-payload"
+  CLEANUP: "true"
+
+  # runtime control (for fail scenarios, keep it longer to observe the outage window)
+  FAIL_MIN_HOLD_SECONDS: "600"
+  FAIL_MAX_HOLD_SECONDS: "1200"
+  # FAIL_HOLD_SECONDS: "900"
+  FAIL_TIMEOUT_PADDING: "30"
+
+  # safety: set matcher timeout (recommended true for fail; auto stop if runner dies)
+  FAIL_ENABLE_TIMEOUT: "true"
+
+  LOG_DIR: "/logs"

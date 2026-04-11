@@ -1,0 +1,303 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mem-payload-script-pod-high-configmap
+  namespace: chaosblade
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+    RUN_ID="$(date +%Y%m%d%H%M%S)"
+
+    : "${TARGET_NS:?TARGET_NS is required}"
+    : "${POD_NAME:?POD_NAME is required}"
+    : "${CONTAINER_NAME:=}"  # Optional; if provided, validate it first, otherwise fall back to the first container
+
+    : "${BLADE_NAME:=chaosblade-pod-mem-high-payload}"
+    : "${CLEANUP:=true}"
+    : "${TIMEOUT:=}"  # New: support the TIMEOUT environment variable
+
+    : "${PERCENT:=}"
+    : "${RESERVE_MB:=}"
+
+    : "${MAX_MEM_PERCENT:=90}"
+    : "${RAMP_SECONDS:=180}"
+    : "${MIN_HOLD_SECONDS:=6000}"
+    : "${MAX_HOLD_SECONDS:=12000}"
+    : "${TIMEOUT_PADDING:=30}"
+
+    : "${MEM_MODE:=ram}"
+    : "${MEM_RATE:=}"        # MB/s (optional)
+    : "${CGROUP_ROOT:=/host-sys/fs/cgroup}"  # optional
+    : "${LOG_DIR:=/logs}"
+
+    # Check the ChaosBlade CRD scope
+    CHAOSBLADE_SCOPE=$(kubectl get crd chaosblades.chaosblade.io -o jsonpath='{.spec.scope}' 2>/dev/null || echo "Cluster")
+    echo "ChaosBlade CRD scope: $CHAOSBLADE_SCOPE"
+
+    # Choose the kubectl command based on scope
+    if [[ "$CHAOSBLADE_SCOPE" == "Cluster" ]]; then
+      KUBECTL_CMD="kubectl"
+    else
+      KUBECTL_CMD="kubectl -n ${NS}"
+    fi
+
+    mkdir -p "${LOG_DIR}"
+    CN_FOR_LOG="${CONTAINER_NAME:-auto}"
+    LOG_FILE="${LOG_DIR}/pod-mem-high_${TARGET_NS}_${POD_NAME}_${CN_FOR_LOG}_${BLADE_NAME}_${RUN_ID}.log"
+    exec > >(tee -a "${LOG_FILE}") 2>&1
+
+    JSON_FILE="${LOG_FILE%.log}.json"
+    JSON_FIRST=1
+    JSON_CLOSED=0
+    echo "[" > "${JSON_FILE}"
+
+    # Note: this must be \n (do not actually break the line outside YAML), otherwise it will break YAML indentation and cause "could not find expected ':'"
+    log() { printf '%s [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${RUN_ID}" "$*"; }
+
+    json_close() {
+      if [ "${JSON_CLOSED}" -eq 0 ]; then
+        echo "]" >> "${JSON_FILE}"
+        JSON_CLOSED=1
+      fi
+    }
+
+    json_append_object() {
+      local fp="$1"
+      if [ "${JSON_FIRST}" -eq 0 ]; then echo "," >> "${JSON_FILE}"; fi
+      cat "${fp}" >> "${JSON_FILE}"
+      JSON_FIRST=0
+    }
+
+    rand_between() {
+      local min="$1" max="$2"
+      local span=$((max - min + 1))
+      echo $(( min + (RANDOM % span) ))
+    }
+
+    cleanup() {
+      json_close || true
+      if [ "${CLEANUP}" = "true" ]; then
+        log "cleanup: deleting chaosblade ${BLADE_NAME} (scope=${CHAOSBLADE_SCOPE})"
+
+        if [[ "$CHAOSBLADE_SCOPE" == "Cluster" ]]; then
+          kubectl delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+        else
+          kubectl -n "${NS}" delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+        fi
+      fi
+    }
+    trap cleanup EXIT INT TERM
+
+    # ---------- helpers ----------
+    parse_mem_to_mb() {
+      # input examples: 16383704Ki / 16038Mi / 16Gi
+      local cap="$1"
+      if [[ "$cap" =~ ^([0-9]+)Ki$ ]]; then
+        echo $(( ${BASH_REMATCH[1]} / 1024 ))
+      elif [[ "$cap" =~ ^([0-9]+)Mi$ ]]; then
+        echo $(( ${BASH_REMATCH[1]} ))
+      elif [[ "$cap" =~ ^([0-9]+)Gi$ ]]; then
+        echo $(( ${BASH_REMATCH[1]} * 1024 ))
+      elif [[ "$cap" =~ ^([0-9]+)Ti$ ]]; then
+        echo $(( ${BASH_REMATCH[1]} * 1024 * 1024 ))
+      else
+        echo 0
+      fi
+    }
+
+    ceil_div() {
+      local a="$1" b="$2"
+      if [ "$b" -le 0 ]; then echo 0; return; fi
+      echo $(( (a + b - 1) / b ))
+    }
+
+    clamp_percent() {
+      local p="$1"
+      if [ "$p" -gt "${MAX_MEM_PERCENT}" ]; then
+        log "WARN: PERCENT=${p} > MAX_MEM_PERCENT=${MAX_MEM_PERCENT}, clamp to ${MAX_MEM_PERCENT}"
+        echo "${MAX_MEM_PERCENT}"
+      else
+        echo "$p"
+      fi
+    }
+
+    validate_target_container() {
+      log "validating target: ${TARGET_NS}/${POD_NAME} container=${CONTAINER_NAME:-<auto>}"
+
+      if ! kubectl -n "${TARGET_NS}" get pod "${POD_NAME}" >/dev/null 2>&1; then
+        log "ERROR: pod not found: ${TARGET_NS}/${POD_NAME}"
+        exit 1
+      fi
+
+      # 1) If CONTAINER_NAME is explicitly provided, validate that container first
+      if [ -n "${CONTAINER_NAME// }" ]; then
+        local found=""
+        found="$(kubectl -n "${TARGET_NS}" get pod "${POD_NAME}"           -o jsonpath="{.spec.containers[?(@.name==\"${CONTAINER_NAME}\")].name}" 2>/dev/null || true)"
+
+        if [ -n "${found// }" ]; then
+          log "validation OK (explicit container exists): ${CONTAINER_NAME}"
+          return 0
+        fi
+
+        log "WARN: explicit container not found in pod spec: ${CONTAINER_NAME}"
+        log "HINT: containers in pod are:"
+        kubectl -n "${TARGET_NS}" get pod "${POD_NAME}" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' || true
+      fi
+
+      # 2) Fallback: take the first container (avoids accidentally defaulting to sentinel, etc.)
+      local first=""
+      first="$(kubectl -n "${TARGET_NS}" get pod "${POD_NAME}" -o jsonpath='{.spec.containers[0].name}' 2>/dev/null || true)"
+      if [ -z "${first// }" ]; then
+        log "ERROR: cannot determine first container from pod spec"
+        exit 1
+      fi
+
+      CONTAINER_NAME="${first}"
+      log "WARN: fallback to first container: ${CONTAINER_NAME}"
+      log "validation OK (fallback container): ${CONTAINER_NAME}"
+    }
+
+    get_container_mem_limit_mb() {
+      local lim=""
+      lim="$(kubectl -n "${TARGET_NS}" get pod "${POD_NAME}"         -o jsonpath="{.spec.containers[?(@.name=='${CONTAINER_NAME}')].resources.limits.memory}" 2>/dev/null || true)"
+      parse_mem_to_mb "${lim}"
+    }
+
+    # remove a matcher block (- name: xxx + value line)
+    remove_matcher_block() {
+      local key="$1" file="$2"
+      sed "/- name: ${key}/{N;d;}" "${file}" > "${file}.tmp" && mv "${file}.tmp" "${file}"
+    }
+
+    apply_high() {
+      local HOLD_SECONDS="$1"
+      local TIMEOUT_SECONDS="$2"
+
+      # choose ONE: PERCENT or RESERVE_MB
+      if [ -n "${PERCENT// }" ] && [ -n "${RESERVE_MB// }" ]; then
+        log "ERROR: set only one of PERCENT or RESERVE_MB (not both)."
+        exit 1
+      fi
+      if [ -z "${PERCENT// }" ] && [ -z "${RESERVE_MB// }" ]; then
+        log "ERROR: one of PERCENT or RESERVE_MB must be set."
+        exit 1
+      fi
+
+      local mem_percent="${PERCENT}"
+      local reserve_mb="${RESERVE_MB}"
+
+      if [ -n "${mem_percent// }" ]; then
+        mem_percent="$(clamp_percent "${mem_percent}")"
+      fi
+
+      # [MOD] rate handling: ram mode only; if unset, try to estimate, otherwise fall back to 1024
+      local rate_mb=""
+      if [ "${MEM_MODE}" = "ram" ]; then
+        if [ -n "${MEM_RATE// }" ]; then
+          rate_mb="${MEM_RATE}"
+        else
+          # If using percent and the container has a memory limit, estimate from the limit
+          local limit_mb target_mb
+          limit_mb="$(get_container_mem_limit_mb)"
+          if [ "${limit_mb}" -gt 0 ] && [ -n "${mem_percent// }" ]; then
+            [ "${RAMP_SECONDS}" -lt 1 ] && RAMP_SECONDS=1
+            target_mb=$(( limit_mb * mem_percent / 100 ))
+            rate_mb="$(ceil_div "${target_mb}" "${RAMP_SECONDS}")"
+            [ "${rate_mb}" -lt 1 ] && rate_mb=1
+            log "rate auto: limit=${limit_mb}MB percent=${mem_percent}% ramp=${RAMP_SECONDS}s => rate=${rate_mb}MB/s"
+          else
+            rate_mb="1024"
+            log "WARN: cannot auto-calc rate (no limit or using reserve); fallback rate=${rate_mb}MB/s"
+          fi
+        fi
+      else
+        rate_mb=""
+      fi
+
+      local tmp
+      tmp="$(mktemp)"
+
+      sed         -e "s|__BLADE_NAME__|${BLADE_NAME}|g"         -e "s|__TARGET_NS__|${TARGET_NS}|g"         -e "s|__POD_NAME__|${POD_NAME}|g"         -e "s|__CONTAINER_NAME__|${CONTAINER_NAME}|g"         -e "s|__MEM_PERCENT__|${mem_percent}|g"         -e "s|__RESERVE_MB__|${reserve_mb}|g"         -e "s|__MEM_MODE__|${MEM_MODE}|g"         -e "s|__MEM_RATE__|${rate_mb}|g"         -e "s|__TIMEOUT__|${TIMEOUT_SECONDS}|g"         -e "s|__CGROUP_ROOT__|${CGROUP_ROOT}|g"         /payload/mem-payload.yaml > "${tmp}"
+
+      # [MOD] Remove unused matcher
+      if [ -z "${reserve_mb// }" ]; then
+        remove_matcher_block "reserve" "${tmp}"
+      fi
+      if [ -z "${mem_percent// }" ]; then
+        remove_matcher_block "mem-percent" "${tmp}"
+      fi
+      if [ -z "${rate_mb// }" ]; then
+        remove_matcher_block "rate" "${tmp}"
+      fi
+      if [ -z "${CGROUP_ROOT// }" ]; then
+        remove_matcher_block "cgroup-root" "${tmp}"
+      fi
+
+      log "HIGH: applying mem mode=${MEM_MODE} percent='${mem_percent}' reserve='${reserve_mb}' rate='${rate_mb}' hold=${HOLD_SECONDS}s timeout=${TIMEOUT_SECONDS}s"
+      log "HIGH: rendered manifest (first 200 lines):"
+      nl -ba "${tmp}" | sed -n '1,200p'
+
+      # Clean up leftovers to avoid duplicate names
+      $KUBECTL_CMD delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+      $KUBECTL_CMD wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+
+      local tmpjson tmpjson2
+      tmpjson="$(mktemp)"
+      $KUBECTL_CMD apply -f "${tmp}" -o json > "${tmpjson}"
+      json_append_object "${tmpjson}"
+      rm -f "${tmpjson}" || true
+
+      for j in $(seq 1 10); do
+        STATUS="$($KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
+        [ "${STATUS}" = "Running" ] && { log "HIGH: status.phase=Running"; break; }
+        sleep 1
+      done
+
+      tmpjson2="$(mktemp)"
+      $KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" -o json > "${tmpjson2}"
+      json_append_object "${tmpjson2}"
+      rm -f "${tmpjson2}" || true
+
+      rm -f "${tmp}" || true
+    }
+
+    log "=============================================="
+    log "POD CONTAINER MEM HIGH (k8s yaml via CRD)"
+    log "runner_ns=${NS}"
+    log "target=${TARGET_NS}/${POD_NAME} container=${CONTAINER_NAME:-<auto>}"
+    log "mode=${MEM_MODE} percent='${PERCENT}' reserve='${RESERVE_MB}'"
+    log "ramp=${RAMP_SECONDS}s hold=[${MIN_HOLD_SECONDS},${MAX_HOLD_SECONDS}] padding=${TIMEOUT_PADDING}s"
+    log "ChaosBlade CRD scope: ${CHAOSBLADE_SCOPE}"
+    log "cgroup_root='${CGROUP_ROOT}'"
+    log "log_file=${LOG_FILE}"
+    log "=============================================="
+
+    validate_target_container
+
+    if [ -n "${HOLD_SECONDS:-}" ] && [ -n "${HOLD_SECONDS// }" ]; then
+      HOLD="${HOLD_SECONDS}"
+    else
+      HOLD="$(rand_between "${MIN_HOLD_SECONDS}" "${MAX_HOLD_SECONDS}")"
+    fi
+
+    # Compute TIMEOUT: use the environment variable if set, otherwise fall back to the calculated value
+    if [ -n "${TIMEOUT}" ]; then
+      TIMEOUT_SECONDS="${TIMEOUT}"
+      log "Using TIMEOUT from environment variable: ${TIMEOUT_SECONDS} seconds"
+    else
+      TIMEOUT_SECONDS=$((RAMP_SECONDS + HOLD + TIMEOUT_PADDING))
+      log "Calculated TIMEOUT: ${RAMP_SECONDS}s + ${HOLD}s + ${TIMEOUT_PADDING}s = ${TIMEOUT_SECONDS}s"
+    fi
+
+    apply_high "${HOLD}" "${TIMEOUT_SECONDS}"
+
+    log "HIGH: holding ${HOLD}s..."
+    sleep "${HOLD}"
+
+    log "HIGH: finished; deleting blade now..."
+    cleanup
+
+    log "done"

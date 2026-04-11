@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: disk-io-payload-pod-delay-stable-cron-runner
+  namespace: chaosblade
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: disk-io-payload-pod-delay-stable-cron-runner
+rules:
+  - apiGroups: ["chaosblade.io"]
+    resources: ["chaosblades"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: disk-io-payload-pod-delay-stable-cron-runner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: disk-io-payload-pod-delay-stable-cron-runner
+subjects:
+  - kind: ServiceAccount
+    name: disk-io-payload-pod-delay-stable-cron-runner
+    namespace: chaosblade
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: disk-io-payload-pod-delay-stable-cron
+  namespace: chaosblade
+spec:
+  schedule: "*/20 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 900
+      ttlSecondsAfterFinished: 300
+      template:
+        spec:
+          serviceAccountName: disk-io-payload-pod-delay-stable-cron-runner
+          restartPolicy: Never
+          containers:
+            - name: runner
+              image: bitnami/kubectl:latest
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - configMapRef:
+                    name: disk-io-payload-env-pod-delay-stable-configmap
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+                - name: payload
+                  mountPath: /payload
+                - name: logs
+                  mountPath: /logs
+              command: ["/scripts/run.sh"]
+          volumes:
+            - name: script
+              configMap:
+                name: disk-io-payload-script-pod-delay-stable-configmap
+                defaultMode: 0555
+            - name: payload
+              configMap:
+                name: disk-io-payload-template-pod-delay-stable-configmap
+                defaultMode: 0444
+            - name: logs
+              persistentVolumeClaim:
+                claimName: node-logs-pvc

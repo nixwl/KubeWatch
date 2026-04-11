@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disk-io-payload-env-pod-delay-stable-configmap
+  namespace: chaosblade
+data:
+  TARGET_NS: "default"
+  POD_NAME: "stress-test-865d7b6b9c-crfx9"
+  # POD_LABELS: "app=stress-test"   # Optional: enable this when not using POD_NAME (supported by the script)
+
+  BLADE_NAME: "chaosblade-pod-io-delay-stable-payload"
+  CLEANUP: "true"
+
+  # Pure delay (stable slowdown)
+  IO_METHOD: "read" # e.g. read / write / open / fsync / rename ...
+  IO_DELAY_MS: "1000" # Delay 1000ms on each hit
+  IO_PERCENT: "100" # Stable slowdown: 100%
+
+  IO_PATH: "/data/conf" # Must be within the injected directory (e.g. /data/conf)
+
+  IO_MIN_HOLD_SECONDS: "120"
+  IO_MAX_HOLD_SECONDS: "300"
+  IO_TIMEOUT_PADDING: "30"
+  # IO_HOLD_SECONDS: "180"     # Optional: fixed hold
+
+  # Optional selectors (leave empty if unused)
+  EVICT_COUNT: ""
+  EVICT_PERCENT: ""
+  WAITING_TIME: "" # e.g. 20s
+
+  LOG_DIR: "/logs"

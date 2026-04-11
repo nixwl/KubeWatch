@@ -1,0 +1,31 @@
+# mem-payload-template.high.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mem-payload-template-high-configmap
+  namespace: chaosblade
+data:
+  mem-payload.yaml: |
+    apiVersion: chaosblade.io/v1alpha1
+    kind: ChaosBlade
+    metadata:
+      name: __BLADE_NAME__
+      labels:
+        app: chaosblade-mem-payload
+    spec:
+      experiments:
+        - scope: node
+          target: mem
+          action: load
+          desc: "spike to __MEM_PERCENT__% over __RAMP_SECONDS__s"
+          matchers:
+            - name: names
+              value: ["__TARGET_NODE__"]
+            - name: mem-percent
+              value: ["__MEM_PERCENT__"]
+            - name: mode
+              value: ["__MEM_MODE__"]
+            - name: rate
+              value: ["__MEM_RATE__"]
+            - name: timeout
+              value: ["__TIMEOUT__"]

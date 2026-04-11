@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disk-io-payload-env-pod-delay-intermit-configmap
+  namespace: chaosblade
+data:
+  TARGET_NS: "default"
+  POD_NAME: "stress-test-865d7b6b9c-crfx9"
+  # POD_LABELS: "app=stress-test"   # Optional: enable this when not using POD_NAME (supported by the script)
+
+  BLADE_NAME: "chaosblade-pod-io-delay-intermit-payload"
+  CLEANUP: "true"
+
+  # IO delay parameters (same as stable)
+  IO_METHOD: "read" # read / write / open / fsync / rename ...
+  IO_DELAY_MS: "1000" # Delay 1000ms on each hit
+  IO_PERCENT: "100" # Hit ratio when slowing down: 100% (change to 30/50 for a milder intermittent slowdown)
+  IO_PATH: "/data/conf" # Must be within the injected directory (e.g. /data/conf)
+
+  # ====== Core intermittent logic parameters ======
+  # Each cycle: slow (SLOW) -> recover (GAP) -> next cycle
+  IO_MIN_SLOW_SECONDS: "30"
+  IO_MAX_SLOW_SECONDS: "120"
+  # IO_SLOW_SECONDS: "60"      # Optional: fixed slow duration (takes precedence if set)
+
+  IO_MIN_GAP_SECONDS: "60"
+  IO_MAX_GAP_SECONDS: "300"
+  # IO_GAP_SECONDS: "120"      # Optional: fixed recovery duration (takes precedence if set)
+
+  IO_MIN_CYCLES: "3"
+  IO_MAX_CYCLES: "6"
+  # IO_CYCLES: "4"             # Optional: fixed cycle count (takes precedence if set)
+
+  IO_TIMEOUT_PADDING: "30"
+
+  # Optional selectors (leave empty if unused)
+  EVICT_COUNT: ""
+  EVICT_PERCENT: ""
+  WAITING_TIME: "" # e.g. 20s
+
+  LOG_DIR: "/logs"

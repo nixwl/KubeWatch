@@ -1,0 +1,18 @@
+# mem-payload-env.high.configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mem-payload-env-high-configmap
+  namespace: chaosblade
+data:
+  TARGET_NODE: "emanage1"
+  BLADE_NAME: "chaosblade-singlenode-mem-high-payload"
+  CLEANUP: "true"
+  PERCENT: "85"
+  MAX_MEM_PERCENT: "90"
+  RAMP_SECONDS: "180"
+  MIN_HOLD_SECONDS: "6000"
+  MAX_HOLD_SECONDS: "12000"
+  TIMEOUT_PADDING: "30"
+  # HOLD_SECONDS: "180"
+  MEM_MODE: "ram"

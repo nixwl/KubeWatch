@@ -1,0 +1,29 @@
+# mem-payload-env.pod.spike.configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mem-payload-env-pod-spike-configmap
+  namespace: chaosblade
+data:
+  TARGET_NS: "default"
+  POD_NAME: "stress-test-54bd654895-4vnwl"
+  CONTAINER_NAME: "busybox"
+
+  BLADE_NAME: "chaosblade-pod-mem-spike-payload"
+  CLEANUP: "true"
+
+  SPIKE_PERCENT: "85"
+  MAX_MEM_PERCENT: "90"
+
+  SPIKE_RAMP_SECONDS: "2"
+  SPIKE_MIN_HOLD_SECONDS: "30"
+  SPIKE_MAX_HOLD_SECONDS: "90"
+  SPIKE_TIMEOUT_PADDING: "30"
+  # SPIKE_HOLD_SECONDS: "60"
+
+  MEM_MODE: "ram"      # ram/cache
+  MEM_RATE: ""         # optional MB/s; empty => auto(best-effort) when mode=ram
+
+  # optional: if your chaosblade-agent doesn't have this mount, try "/sys/fs/cgroup" or set empty to remove matcher
+  CGROUP_ROOT: "/host-sys/fs/cgroup"
+  LOG_DIR: "/logs"

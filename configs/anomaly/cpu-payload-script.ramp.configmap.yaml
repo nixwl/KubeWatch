@@ -1,0 +1,217 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cpu-payload-script-ramp-configmap
+  namespace: chaosblade
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+    RUN_ID="$(date +%Y%m%d%H%M%S)"
+
+    : "${TARGET_NODE:?TARGET_NODE is required}"
+    : "${HIGH:?HIGH is required}"
+    : "${LOW:?LOW is required}"
+    : "${RAMP_SECONDS:=15}"
+    : "${HOLD_SECONDS:=25}"
+    : "${CYCLES:=5}"
+    : "${BLADE_NAME:=chaosblade-cpu-payload}"
+    : "${CLEANUP:=true}"
+    : "${TIMEOUT:=}"  # New: support the TIMEOUT environment variable
+
+    CPU_COUNT="${CPU_COUNT:-}"
+    CPU_LIST="${CPU_LIST:-}"
+
+    # Logs dir with PVC (default=/logs)
+    : "${LOG_DIR:=/logs}"
+
+    # New: determine the ChaosBlade scope
+    CHAOSBLADE_SCOPE=$(kubectl get crd chaosblades.chaosblade.io -o jsonpath='{.spec.scope}' 2>/dev/null || echo "Namespaced")
+    echo "ChaosBlade CRD scope: $CHAOSBLADE_SCOPE"
+
+    # New: choose the kubectl command based on scope
+    if [[ "$CHAOSBLADE_SCOPE" == "Cluster" ]]; then
+        KUBECTL_CMD="kubectl"
+    else
+        KUBECTL_CMD="kubectl -n ${NS}"
+    fi
+
+    if [ -n "${CPU_COUNT// }" ] && [ -n "${CPU_LIST// }" ]; then
+      echo "ERROR: set only one of CPU_COUNT or CPU_LIST (not both)."
+      exit 1
+    fi
+
+    # Phase timeout = ramp + hold
+    PHASE_TIMEOUT=$((RAMP_SECONDS + HOLD_SECONDS))
+
+    # If TIMEOUT is not set, use PHASE_TIMEOUT
+    if [ -z "${TIMEOUT}" ]; then
+        TIMEOUT="${PHASE_TIMEOUT}"
+    fi
+
+    echo "Using TIMEOUT: ${TIMEOUT} seconds (from the environment variable)"
+
+    # Total time estimate
+    TOTAL_TIME=$((CYCLES * 2 * (RAMP_SECONDS + HOLD_SECONDS)))
+
+    mkdir -p "${LOG_DIR}"
+    LOG_FILE="${LOG_DIR}/cpu-ramp_${TARGET_NODE}_${BLADE_NAME}_${RUN_ID}.log"
+    # Redirect stdout/stderr to logs
+    exec > >(tee -a "${LOG_FILE}") 2>&1
+
+    JSON_FILE="${LOG_FILE%.log}.json"
+    JSON_FIRST=1
+    JSON_CLOSED=0
+    echo "[" > "${JSON_FILE}"
+
+    log() {
+      # UTC timestamp
+      printf '%s [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${RUN_ID}" "$*"
+    }
+
+    json_close() {
+      if [ "${JSON_CLOSED}" -eq 0 ]; then
+        echo "]" >> "${JSON_FILE}"
+        JSON_CLOSED=1
+      fi
+    }
+
+    json_append_object() {
+      local fp="$1"
+      if [ "${JSON_FIRST}" -eq 0 ]; then
+        echo "," >> "${JSON_FILE}"
+      fi
+      cat "${fp}" >> "${JSON_FILE}"
+      JSON_FIRST=0
+    }
+
+    cleanup() {
+      json_close || true
+
+      if [ "${CLEANUP}" = "true" ]; then
+        log "cleanup: deleting ${BLADE_NAME} (scope=${CHAOSBLADE_SCOPE})"
+        $KUBECTL_CMD delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+        if ! $KUBECTL_CMD wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1; then
+          log "WARN: cleanup wait-for-delete timed out: ${BLADE_NAME}"
+          $KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" -o wide 2>/dev/null || true
+        fi
+      fi
+    }
+    # trap cleanup EXIT
+    trap cleanup EXIT INT TERM
+
+    apply_ramp() {
+      local TARGET_PERCENT="$1"
+      local PHASE_NAME="$2"
+
+      local tmp1 tmp2
+      tmp1="$(mktemp)"
+      tmp2="$(mktemp)"
+
+      # 1) Render placeholders - use TIMEOUT from the environment
+      sed \
+        -e "s|__BLADE_NAME__|${BLADE_NAME}|g" \
+        -e "s|__TARGET_NODE__|${TARGET_NODE}|g" \
+        -e "s|__CPU_PERCENT__|${TARGET_PERCENT}|g" \
+        -e "s|__CLIMB_TIME__|${RAMP_SECONDS}|g" \
+        -e "s|__TIMEOUT__|${TIMEOUT}|g" \
+        -e "s|__CPU_COUNT__|${CPU_COUNT}|g" \
+        -e "s|__CPU_LIST__|${CPU_LIST}|g" \
+        /payload/cpu-payload.yaml > "${tmp1}"
+
+      # 2) Remove the corresponding matcher when CPU_COUNT is empty
+      if [ -z "${CPU_COUNT// }" ]; then
+        sed '/- name: cpu-count/{N;d;}' "${tmp1}" > "${tmp2}"
+        mv "${tmp2}" "${tmp1}"
+      fi
+
+      # 3) Remove the corresponding matcher when CPU_LIST is empty
+      if [ -z "${CPU_LIST// }" ]; then
+        sed '/- name: cpu-list/{N;d;}' "${tmp1}" > "${tmp2}"
+        mv "${tmp2}" "${tmp1}"
+      fi
+
+      log "${PHASE_NAME}: ramping to ${TARGET_PERCENT}% over ${RAMP_SECONDS}s, hold ${HOLD_SECONDS}s, timeout=${TIMEOUT}s"
+      log "[JSON] kubectl apply output will be appended to: ${JSON_FILE}"
+
+      local tmpjson tmpjson2
+      tmpjson="$(mktemp)"
+
+      $KUBECTL_CMD apply -f "${tmp1}" -o json > "${tmpjson}"
+
+      json_append_object "${tmpjson}"
+      rm -f "${tmpjson}" || true
+      log "[${RUN_ID}] ${PHASE_NAME}: effective matchers (from CR spec):"
+
+      $KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" -o jsonpath='{range .spec.experiments[0].matchers[*]}{.name}={.value}{"\n"}{end}' | grep -E '^(cpu-percent|cpu-count|cpu-list)=' || true
+     
+      rm -f "${tmp1}" "${tmp2}" || true
+
+      # Wait for the experiment to enter Running state
+      for j in $(seq 1 10); do
+        STATUS="$($KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
+        if [ "${STATUS}" = "Running" ]; then
+          log "RAMP: status.phase=Running"
+          break
+        fi
+        sleep 1
+      done
+
+      tmpjson2="$(mktemp)"
+      $KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" -o json > "${tmpjson2}"
+      json_append_object "${tmpjson2}"
+      rm -f "${tmpjson2}" || true
+    }
+
+    log "=============================================="
+    log "RAMP MODE (Smooth Transition)"
+    log "ns=${NS}"
+    log "node=${TARGET_NODE}"
+    log "low=${LOW}% <-> high=${HIGH}%"
+    log "ramp=${RAMP_SECONDS}s hold=${HOLD_SECONDS}s cycles=${CYCLES}"
+    log "estimated total time: ${TOTAL_TIME}s"
+    log "timeout: ${TIMEOUT}s"
+    log "json_file=${JSON_FILE}"
+    log "ChaosBlade CRD scope: ${CHAOSBLADE_SCOPE}"
+    log "=============================================="
+    log ""
+    log "  CPU%"
+    log "   ${HIGH} |    /----\\      /----\\"
+    log "      |   /      \\    /      \\"
+    log "   ${LOW} |--/        \\--/        \\--"
+    log "      +----------------------------> time"
+    log "        ramp  hold  ramp  hold"
+    log ""
+
+    # Clean up any previously remaining experiment
+    $KUBECTL_CMD delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+    $KUBECTL_CMD wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+
+    c=1
+    while [ "${c}" -le "${CYCLES}" ]; do
+      log ""
+      log "====== Cycle ${c}/${CYCLES} ======"
+
+      # Ramp-up phase LOW -> HIGH
+      apply_ramp "${HIGH}" "RAMP UP"
+
+      # Wait for ramp completion + hold time + 2
+      WAIT_TIME=$((RAMP_SECONDS + HOLD_SECONDS + 2))
+      log "waiting ${WAIT_TIME}s (ramp + hold)..."
+      sleep "${WAIT_TIME}"
+
+      # Ramp-down phase HIGH -> LOW
+      apply_ramp "${LOW}" "RAMP DOWN"
+
+      # Wait for ramp completion + hold time
+      log "waiting ${WAIT_TIME}s (ramp + hold)..."
+      sleep "${WAIT_TIME}"
+
+      c=$((c + 1))
+    done
+
+    log ""
+    log "all ${CYCLES} cycles completed"
+    log "done"

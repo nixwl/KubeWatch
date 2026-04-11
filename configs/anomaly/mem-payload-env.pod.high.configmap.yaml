@@ -1,0 +1,29 @@
+# mem-payload-env.pod-high.configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mem-payload-env-pod-high-configmap
+  namespace: chaosblade
+data:
+  TARGET_NS: "default"
+  POD_NAME: "stress-test-54bd654895-4vnwl"
+  CONTAINER_NAME: "busybox"
+
+  BLADE_NAME: "chaosblade-pod-mem-high-payload"
+  CLEANUP: "true"
+
+  PERCENT: "85"
+  MAX_MEM_PERCENT: "90"
+  RESERVE_MB: ""
+
+  RAMP_SECONDS: "180"
+  MIN_HOLD_SECONDS: "6000"
+  MAX_HOLD_SECONDS: "12000"
+  TIMEOUT_PADDING: "30"
+  # HOLD_SECONDS: "7200"
+
+  MEM_MODE: "ram" # ram / cache
+  MEM_RATE: "" # MB/s
+
+  CGROUP_ROOT: "/host-sys/fs/cgroup" # [MOD] If your agent does not mount this path, change to "/sys/fs/cgroup" or leave empty to remove the matcher
+  LOG_DIR: "/logs"

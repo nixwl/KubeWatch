@@ -1,0 +1,238 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mem-payload-script-spike-configmap
+  namespace: chaosblade
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+    RUN_ID="$(date +%Y%m%d%H%M%S)"
+
+    : "${TARGET_NODE:?TARGET_NODE is required}"
+    : "${PERCENT:?PERCENT is required}"
+    : "${RAMP_SECONDS:=5}"
+    : "${MIN_HOLD_SECONDS:=60}"
+    : "${MAX_HOLD_SECONDS:=300}"
+    : "${TIMEOUT_PADDING:=30}"
+    : "${BLADE_NAME:=chaosblade-singlenode-mem-payload}"
+    : "${CLEANUP:=true}"
+    : "${TIMEOUT:=}"  # New: support the TIMEOUT environment variable
+
+    # mem load params
+    : "${MEM_MODE:=ram}" 
+    : "${MAX_MEM_PERCENT:=90}"    # upper bound = 90%
+
+    # logs dir with pvc (default=/logs)
+    : "${LOG_DIR:=/logs}"
+
+    # Check the ChaosBlade CRD scope once
+    CHAOSBLADE_SCOPE=$(kubectl get crd chaosblades.chaosblade.io -o jsonpath='{.spec.scope}' 2>/dev/null || echo "Namespaced")
+    echo "ChaosBlade CRD scope: $CHAOSBLADE_SCOPE"
+
+    # Choose the kubectl command based on scope
+    if [[ "$CHAOSBLADE_SCOPE" == "Cluster" ]]; then
+        KUBECTL_CMD="kubectl"
+    else
+        KUBECTL_CMD="kubectl -n ${NS}"
+    fi
+
+    mkdir -p "${LOG_DIR}"
+    LOG_FILE="${LOG_DIR}/mem-spike_${TARGET_NODE}_${BLADE_NAME}_${RUN_ID}.log"
+    # out stdout/stderr to logs
+    exec > >(tee -a "${LOG_FILE}") 2>&1
+
+    JSON_FILE="${LOG_FILE%.log}.json"
+    JSON_FIRST=1
+    JSON_CLOSED=0
+    echo "[" > "${JSON_FILE}"
+
+    log() {
+      # UTC timestamp
+      printf '%s [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${RUN_ID}" "$*"
+    }
+
+    json_close() {
+      if [ "${JSON_CLOSED}" -eq 0 ]; then
+        echo "]" >> "${JSON_FILE}"
+        JSON_CLOSED=1
+      fi
+    }
+
+    json_append_object() {
+      local fp="$1"
+      if [ "${JSON_FIRST}" -eq 0 ]; then
+        echo "," >> "${JSON_FILE}"
+      fi
+      cat "${fp}" >> "${JSON_FILE}"
+      JSON_FIRST=0
+    }
+
+    rand_between() {
+      local min="$1" max="$2"
+      local span=$((max - min + 1))
+      echo $(( min + (RANDOM % span) ))
+    }
+
+    cleanup() {
+      json_close || true
+      
+      if [ "${CLEANUP}" = "true" ]; then
+        log "cleanup: deleting ${BLADE_NAME} (scope=${CHAOSBLADE_SCOPE})"
+        
+        if [[ "$CHAOSBLADE_SCOPE" == "Cluster" ]]; then
+          kubectl delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+        else
+          kubectl -n "${NS}" delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found || true
+        fi
+      fi
+    }
+    trap cleanup EXIT INT TERM
+
+    # --- helpers: compute rate(MB/s) based on node mem capacity + ramp seconds ---
+    parse_mem_to_mb() {
+      # input examples: 16383704Ki / 16038Mi / 16Gi
+      local cap="$1"
+      if [[ "$cap" =~ ^([0-9]+)Ki$ ]]; then
+        echo $(( ${BASH_REMATCH[1]} / 1024 ))
+      elif [[ "$cap" =~ ^([0-9]+)Mi$ ]]; then
+        echo $(( ${BASH_REMATCH[1]} ))
+      elif [[ "$cap" =~ ^([0-9]+)Gi$ ]]; then
+        echo $(( ${BASH_REMATCH[1]} * 1024 ))
+      else
+        echo 0
+      fi
+    }
+
+    ceil_div() {
+      local a="$1" b="$2"
+      if [ "$b" -le 0 ]; then echo 0; return; fi
+      echo $(( (a + b - 1) / b ))
+    }
+
+    clamp_percent() {
+      local p="$1"
+      if [ "$p" -gt "${MAX_MEM_PERCENT}" ]; then
+        log "WARN: PERCENT=${p} > MAX_MEM_PERCENT=${MAX_MEM_PERCENT}, clamping to ${MAX_MEM_PERCENT}"
+        echo "${MAX_MEM_PERCENT}"
+      else
+        echo "$p"
+      fi
+    }
+
+    apply_spike() {
+      local HOLD_SECONDS="$1"
+      local TIMEOUT_SECONDS="$2"
+
+      local tmp
+      tmp="$(mktemp)"
+
+      # fetch node memory capacity and compute rate
+      local cap total_mb target_mb rate_mb
+      cap="$($KUBECTL_CMD get node "${TARGET_NODE}" -o jsonpath='{.status.capacity.memory}' 2>/dev/null || true)"
+      total_mb="$(parse_mem_to_mb "${cap:-}")"
+
+      # ramp seconds sanity
+      if [ "${RAMP_SECONDS}" -lt 1 ]; then
+        log "WARN: RAMP_SECONDS=${RAMP_SECONDS} invalid, set to 1"
+        RAMP_SECONDS=1
+      fi
+
+      # compute rate = ceil(target_mb / ramp_seconds), fallback 1024 if unknown
+      if [ "${total_mb}" -gt 0 ]; then
+        target_mb=$(( total_mb * PERCENT / 100 ))
+        rate_mb="$(ceil_div "${target_mb}" "${RAMP_SECONDS}")"
+        if [ "${rate_mb}" -lt 1 ]; then rate_mb=1; fi
+      else
+        log "WARN: cannot parse node mem capacity from '${cap}', fallback rate=1024MB/s"
+        rate_mb=1024
+      fi
+
+      sed \
+        -e "s|__BLADE_NAME__|${BLADE_NAME}|g" \
+        -e "s|__TARGET_NODE__|${TARGET_NODE}|g" \
+        -e "s|__MEM_PERCENT__|${PERCENT}|g" \
+        -e "s|__MEM_MODE__|${MEM_MODE}|g" \
+        -e "s|__MEM_RATE__|${rate_mb}|g" \
+        -e "s|__RAMP_SECONDS__|${RAMP_SECONDS}|g" \
+        -e "s|__TIMEOUT__|${TIMEOUT_SECONDS}|g" \
+        /payload/mem-payload.yaml > "${tmp}"
+
+      log "SPIKE: node_mem_capacity=${cap:-unknown} total_mb=${total_mb} target_percent=${PERCENT}%"
+      log "SPIKE: applying mem load (mode=${MEM_MODE} rate=${rate_mb}MB/s ramp=${RAMP_SECONDS}s hold=${HOLD_SECONDS}s timeout=${TIMEOUT_SECONDS}s)"
+
+      local tmpjson tmpjson2
+      tmpjson="$(mktemp)"
+
+      $KUBECTL_CMD apply -f "${tmp}" -o json > "${tmpjson}"
+
+      json_append_object "${tmpjson}"
+      rm -f "${tmpjson}" || true
+
+      log "SPIKE: effective matchers (from CR spec):"
+      $KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" \
+        -o jsonpath='{range .spec.experiments[0].matchers[*]}{.name}={.value}{"\n"}{end}' \
+        | grep -E '^(mem-percent|mode|rate|timeout)=' || true
+
+      rm -f "${tmp}" || true
+
+      # wait Running (<=10s)
+      for j in $(seq 1 10); do
+        STATUS="$($KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
+        if [ "${STATUS}" = "Running" ]; then
+          log "SPIKE: status.phase=Running"
+          break
+        fi
+        sleep 1
+      done
+
+      tmpjson2="$(mktemp)"
+      $KUBECTL_CMD get chaosblades.chaosblade.io "${BLADE_NAME}" -o json > "${tmpjson2}"
+      json_append_object "${tmpjson2}"
+      rm -f "${tmpjson2}" || true
+    }
+
+    # clamp percent to <= MAX_MEM_PERCENT (default 90)
+    PERCENT="$(clamp_percent "${PERCENT}")"
+
+    log "=============================================="
+    log "SPIKE MODE (MEM PERCENT, MAX=${MAX_MEM_PERCENT}%)"
+    log "ns=${NS}"
+    log "node=${TARGET_NODE}"
+    log "percent=${PERCENT}% ramp=${RAMP_SECONDS}s"
+    log "mode=${MEM_MODE}"
+    log "ChaosBlade CRD scope: ${CHAOSBLADE_SCOPE}"
+    log "log_file=${LOG_FILE}"
+    log "=============================================="
+
+    # cleanup previous
+    $KUBECTL_CMD delete chaosblades.chaosblade.io "${BLADE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
+    $KUBECTL_CMD wait --for=delete chaosblades.chaosblade.io/"${BLADE_NAME}" --timeout=60s >/dev/null 2>&1 || true
+
+    # choose hold
+    if [ -n "${HOLD_SECONDS:-}" ] && [ -n "${HOLD_SECONDS// }" ]; then
+      HOLD="${HOLD_SECONDS}"
+    else
+      HOLD="$(rand_between "${MIN_HOLD_SECONDS}" "${MAX_HOLD_SECONDS}")"
+    fi
+
+    # Compute TIMEOUT: use the environment variable if set, otherwise fall back to the calculated value
+    if [ -n "${TIMEOUT}" ]; then
+      TIMEOUT_SECONDS="${TIMEOUT}"
+      log "Using TIMEOUT from environment variable: ${TIMEOUT_SECONDS} seconds"
+    else
+      TIMEOUT_SECONDS=$((RAMP_SECONDS + HOLD + TIMEOUT_PADDING))
+      log "Calculated TIMEOUT: ${RAMP_SECONDS}s + ${HOLD}s + ${TIMEOUT_PADDING}s = ${TIMEOUT_SECONDS}s"
+    fi
+
+    apply_spike "${HOLD}" "${TIMEOUT_SECONDS}"
+
+    log "SPIKE: holding ${HOLD}s..."
+    sleep "${HOLD}"
+
+    log "SPIKE: finished; deleting blade now..."
+    cleanup
+
+    log "done"

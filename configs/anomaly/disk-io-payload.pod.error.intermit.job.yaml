@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: disk-io-payload-pod-error-intermit-job-runner
+  namespace: chaosblade
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: disk-io-payload-pod-error-intermit-job-runner
+rules:
+  - apiGroups: ["chaosblade.io"]
+    resources: ["chaosblades"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: disk-io-payload-pod-error-intermit-job-runner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: disk-io-payload-pod-error-intermit-job-runner
+subjects:
+  - kind: ServiceAccount
+    name: disk-io-payload-pod-error-intermit-job-runner
+    namespace: chaosblade
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: disk-io-payload-pod-error-intermit-job-
+  namespace: chaosblade
+  labels:
+    app: disk-io-payload-pod-error-intermit
+    run_type: manual
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app: disk-io-payload-pod-error-intermit
+        run_type: manual
+    spec:
+      serviceAccountName: disk-io-payload-pod-error-intermit-job-runner
+      restartPolicy: Never
+      containers:
+        - name: runner
+          image: bitnami/kubectl:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: disk-io-payload-env-pod-error-intermit-configmap
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+            - name: payload
+              mountPath: /payload
+            - name: logs
+              mountPath: /logs
+          command: ["/scripts/run.sh"]
+      volumes:
+        - name: script
+          configMap:
+            name: disk-io-payload-script-pod-error-intermit-configmap
+            defaultMode: 0555
+        - name: payload
+          configMap:
+            name: disk-io-payload-template-pod-error-intermit-configmap
+            defaultMode: 0444
+        - name: logs
+          persistentVolumeClaim:
+            claimName: node-logs-pvc
