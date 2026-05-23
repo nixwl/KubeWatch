@@ -283,6 +283,18 @@ Use the following checklist when reproducing the data collection pipeline:
 ## 📌 Citation
 
 If you use KubeWatch or its construction workflow in your research, please cite the corresponding paper:
+```bibtex
+@misc{zhang2026kubewatch,
+  author       = {Zhang, Ju and Zhang, Rulin and Li, Hua},
+  title        = {{KubeWatch}: A Multi-Level {Kubernetes} Monitoring Dataset for Anomaly Detection},
+  month        = may,
+  year         = {2026},
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.20095271},
+  url          = {https://doi.org/10.5281/zenodo.20095271},
+  note         = {Dataset}
+}
+```
 
 ## 📄 License
 
